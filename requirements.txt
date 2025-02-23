@@ -1,0 +1,10 @@
+pytest
+numpy
+langchain
+openai
+pydantic
+SQLAlchemy
+voyageai
+python-dotenv 
+python-lorem
+requests
