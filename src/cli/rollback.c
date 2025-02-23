@@ -72,11 +72,11 @@ static bool hash_in_history(const char* repo_root, const char* source_file, cons
         char history_path[PATH_MAX];
         snprintf(history_path, sizeof(history_path), "%s/.eb/history", repo_root);
         
-        fprintf(stderr, "Debug - Checking history file: %s\n", history_path);
+        DEBUG_PRINT("Checking history file: %s\n", history_path);
         
         FILE* hist_file = fopen(history_path, "r");
         if (!hist_file) {
-                fprintf(stderr, "Debug - Could not open history file\n");
+                DEBUG_PRINT("Could not open history file\n");
                 return false;
         }
 
@@ -88,7 +88,7 @@ static bool hash_in_history(const char* repo_root, const char* source_file, cons
                 if (*rel_source == '/') rel_source++; // Skip leading slash
         }
         
-        fprintf(stderr, "Debug - Using relative source path: %s\n", rel_source);
+        DEBUG_PRINT("Using relative source path: %s\n", rel_source);
 
         char* matching_hash = NULL;
         int match_count = 0;
@@ -100,12 +100,12 @@ static bool hash_in_history(const char* repo_root, const char* source_file, cons
                 char hash_hist[65];
                 line[strcspn(line, "\n")] = 0;
                 
-                fprintf(stderr, "Debug - Reading line: %s\n", line);
+                DEBUG_PRINT("Reading line: %s\n", line);
                 
                 if (sscanf(line, "%ld %s %s", &timestamp, hash_hist, file_path_hist) == 3) {
-                        fprintf(stderr, "Debug - Comparing paths - History: %s, Source: %s\n", 
+                        DEBUG_PRINT("Comparing paths - History: %s, Source: %s\n", 
                                 file_path_hist, rel_source);
-                        fprintf(stderr, "Debug - Comparing hashes - History: %s, Target: %s\n", 
+                        DEBUG_PRINT("Comparing hashes - History: %s, Target: %s\n", 
                                 hash_hist, hash_to_rollback);
                         
                         if (strcmp(file_path_hist, rel_source) == 0 &&
@@ -121,11 +121,11 @@ static bool hash_in_history(const char* repo_root, const char* source_file, cons
         fclose(hist_file);
 
         if (match_count > 1) {
-                fprintf(stderr, "Debug - Multiple matches found for hash prefix\n");
+                DEBUG_PRINT("Multiple matches found for hash prefix\n");
                 free(matching_hash);
                 return false;
         } else if (match_count == 1) {
-                fprintf(stderr, "Debug - Single match found: %s\n", matching_hash);
+                DEBUG_PRINT("Single match found: %s\n", matching_hash);
                 // Update the hash_to_rollback to the full hash for the index update
                 strncpy((char*)hash_to_rollback, matching_hash, 64);
                 ((char*)hash_to_rollback)[64] = '\0';
@@ -133,7 +133,7 @@ static bool hash_in_history(const char* repo_root, const char* source_file, cons
                 return true;
         }
 
-        fprintf(stderr, "Debug - No matches found\n");
+        DEBUG_PRINT("No matches found\n");
         return false;
 }
 
@@ -229,9 +229,8 @@ int cmd_rollback(int argc, char** argv)
         eb_status_t status;
 
         /* Debug output */
-        fprintf(stderr, "Debug - Rollback called with:\n");
-        fprintf(stderr, "  Hash: %s (length: %zu)\n", hash_to_rollback, strlen(hash_to_rollback));
-        fprintf(stderr, "  Source: %s\n", source_file);
+        DEBUG_PRINT("Rollback called with:\n  Hash: %s (length: %zu)\n  Source: %s\n",
+                   hash_to_rollback, strlen(hash_to_rollback), source_file);
 
         /* Basic hash format validation */
         size_t hash_len = strlen(hash_to_rollback);
@@ -260,7 +259,7 @@ int cmd_rollback(int argc, char** argv)
                 abs_source_path[sizeof(abs_source_path) - 1] = '\0';
         }
 
-        fprintf(stderr, "Debug - Using absolute source path: %s\n", abs_source_path);
+        DEBUG_PRINT("Using absolute source path: %s\n", abs_source_path);
 
         /* Check if hash exists in history for the source file */
         char full_hash[65];
