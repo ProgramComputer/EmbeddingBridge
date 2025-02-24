@@ -9,13 +9,26 @@
 // Magic numbers for binary format
 #define EB_MAGIC_VECTOR 0x53564245  // "EBVS"
 #define EB_MAGIC_META  0x4D564245   // "EBVM"
-#define EB_VERSION     0x00000001
+// START OF SET THE VERSION HERE
+// Version components
+#define EB_VERSION_MAJOR 0
+#define EB_VERSION_MINOR 1
+#define EB_VERSION_PATCH 0
+
+// Full version as string
+#define EB_VERSION_STR "0.1.0"
+// END OF SET THE VERSION HERE
+
+
+// Full version as integer for compatibility checks
+#define EB_VERSION     ((EB_VERSION_MAJOR << 16) | (EB_VERSION_MINOR << 8) | EB_VERSION_PATCH)
 
 // Version compatibility macros
-#define EB_VERSION_MAJOR(v) ((v) >> 16)
-#define EB_VERSION_MINOR(v) ((v) & 0xFFFF)
-#define EB_MAKE_VERSION(major, minor) (((major) << 16) | (minor))
-#define EB_VERSION_COMPATIBLE(v1, v2) (EB_VERSION_MAJOR(v1) == EB_VERSION_MAJOR(v2))
+#define EB_GET_VERSION_MAJOR(v) ((v) >> 16)
+#define EB_GET_VERSION_MINOR(v) (((v) >> 8) & 0xFF)
+#define EB_GET_VERSION_PATCH(v) ((v) & 0xFF)
+#define EB_MAKE_VERSION(major, minor, patch) (((major) << 16) | ((minor) << 8) | (patch))
+#define EB_VERSION_COMPATIBLE(v1, v2) (EB_GET_VERSION_MAJOR(v1) == EB_GET_VERSION_MAJOR(v2))
 
 // Core data types
 typedef enum {

@@ -48,6 +48,8 @@ static bool is_valid_hash(const char* str);
 static int ends_with(const char* str, const char* suffix);
 static int check_invalid_values(const float* embedding, size_t dims);
 static float cosine_similarity(const float* vec1, const float* vec2, size_t dims);
+static float euclidean_distance(const float* vec1, const float* vec2, size_t dims);
+static float euclidean_similarity(const float* vec1, const float* vec2, size_t dims);
 
 static const char* DIFF_USAGE = 
     "Usage: eb diff <input1> <input2>\n"
@@ -101,6 +103,49 @@ static float cosine_similarity(const float *vec1, const float *vec2, size_t dims
     float similarity = (float)(dot_product / (sqrt(norm1) * sqrt(norm2)));
     
     DEBUG_PRINT("Calculated cosine similarity: %f", similarity);
+    
+    return similarity;
+}
+
+/* Calculate Euclidean distance between two float vectors */
+static float euclidean_distance(const float *vec1, const float *vec2, size_t dims)
+{
+    double sum = 0.0;
+    
+    DEBUG_PRINT("Calculating Euclidean distance for %zu dimensions", dims);
+    
+    for (size_t i = 0; i < dims; i++) {
+        // Check for invalid values
+        if (isnan(vec1[i]) || isnan(vec2[i]) || 
+            isinf(vec1[i]) || isinf(vec2[i])) {
+            DEBUG_PRINT("Invalid value detected at index %zu: vec1=%f, vec2=%f",
+                       i, vec1[i], vec2[i]);
+            return INFINITY;
+        }
+        
+        double diff = (double)vec1[i] - (double)vec2[i];
+        sum += diff * diff;
+    }
+    
+    DEBUG_PRINT("Euclidean distance squared: %f", sum);
+    
+    return (float)sqrt(sum);
+}
+
+/* Calculate normalized Euclidean similarity (0 to 1 scale, where 1 is identical) */
+static float euclidean_similarity(const float *vec1, const float *vec2, size_t dims)
+{
+    float distance = euclidean_distance(vec1, vec2, dims);
+    
+    if (isinf(distance) || isnan(distance)) {
+        return 0.0f;
+    }
+    
+    // Normalize to [0,1] range where 1 means identical
+    // Using a common approach: 1 / (1 + distance)
+    float similarity = 1.0f / (1.0f + distance);
+    
+    DEBUG_PRINT("Calculated normalized Euclidean similarity: %f", similarity);
     
     return similarity;
 }
@@ -436,7 +481,7 @@ int cmd_diff(int argc, char *argv[])
     const char *hash1, *hash2;
     float *emb1 = NULL, *emb2 = NULL;
     size_t dims1, dims2;
-    float similarity;
+    float cos_similarity, euc_distance, euc_similarity;
     int ret = 1;  // Initialize to error state
     bool is_test = getenv("EB_TEST_MODE") != NULL;
     
@@ -454,9 +499,11 @@ int cmd_diff(int argc, char *argv[])
     /* Quick check for identical inputs */
     if (strcmp(hash1, hash2) == 0) {
         if (is_test)
-            printf("→ Similarity: 100%%");
+            printf("→ Cosine Similarity: 100%%\n→ Euclidean Distance: 0.00\n→ Euclidean Similarity: 100%%");
         else
-            printf(COLOR_BOLD_GREEN "→ Similarity: 100%%" COLOR_RESET "\n");
+            printf(COLOR_BOLD_GREEN "→ Cosine Similarity: 100%%" COLOR_RESET "\n"
+                   COLOR_BOLD_GREEN "→ Euclidean Distance: 0.00" COLOR_RESET "\n"
+                   COLOR_BOLD_GREEN "→ Euclidean Similarity: 100%%" COLOR_RESET "\n");
         return 0;
     }
     
@@ -481,16 +528,24 @@ int cmd_diff(int argc, char *argv[])
         goto cleanup;
     }
 
-    /* Calculate similarity */
-    similarity = cosine_similarity(emb1, emb2, dims1);
-    DEBUG_PRINT("Calculated raw similarity: %f", similarity);
+    /* Calculate similarities */
+    cos_similarity = cosine_similarity(emb1, emb2, dims1);
+    euc_distance = euclidean_distance(emb1, emb2, dims1);
+    euc_similarity = euclidean_similarity(emb1, emb2, dims1);
+    
+    DEBUG_PRINT("Calculated raw cosine similarity: %f", cos_similarity);
+    DEBUG_PRINT("Calculated raw Euclidean distance: %f", euc_distance);
+    DEBUG_PRINT("Calculated raw Euclidean similarity: %f", euc_similarity);
 
     /* Print result */
     if (is_test) {
-        printf("→ Similarity: %.0f%%", similarity * 100);
+        printf("→ Cosine Similarity: %.0f%%\n→ Euclidean Distance: %.2f\n→ Euclidean Similarity: %.0f%%", 
+               cos_similarity * 100, euc_distance, euc_similarity * 100);
     } else {
-        printf(COLOR_BOLD_GREEN "→ Similarity: %.0f%%" COLOR_RESET "\n", 
-               similarity * 100);
+        printf(COLOR_BOLD_GREEN "→ Cosine Similarity: %.0f%%" COLOR_RESET "\n"
+               COLOR_BOLD_GREEN "→ Euclidean Distance: %.2f" COLOR_RESET "\n"
+               COLOR_BOLD_GREEN "→ Euclidean Similarity: %.0f%%" COLOR_RESET "\n", 
+               cos_similarity * 100, euc_distance, euc_similarity * 100);
     }
     ret = 0;
 
