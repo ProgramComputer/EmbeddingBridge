@@ -13,8 +13,6 @@ A command-line tool for managing and versioning embedding vectors. Think of it a
 ## Installation
 
 ```bash
-pip install embedding-bridge
-
 make clean
 make DEBUG=0 all
 make DEBUG=0 install
