@@ -80,7 +80,7 @@ class TestEmbeddingBridgeCLI(unittest.TestCase):
         # Initialize eb in Git repo
         subprocess.run(["eb", "init"], cwd=cls.git_dir, check=True)
         
-        # Create test files in Git repo with version history
+        # Create test files in Git repo with version log
         cls._create_test_files(cls.git_dir)
         subprocess.run(["git", "add", "."], cwd=cls.git_dir)
         subprocess.run(["git", "commit", "-m", "Initial commit"], cwd=cls.git_dir)
@@ -309,12 +309,19 @@ class TestEmbeddingBridgeCLI(unittest.TestCase):
             index_content = f.read()
             self.assertIn(f"{source_file}: {hash_value}", index_content)
 
-        # Check .eb/history has the entry
-        history_path = os.path.join(test_dir, ".eb", "history")
-        self.assertTrue(os.path.exists(history_path))
-        with open(history_path) as f:
-            history_content = f.read()
-            self.assertIn(f"{source_file}: {hash_value}", history_content)
+        # Check .eb/log has the entry
+        log_path = os.path.join(test_dir, ".eb", "log")
+        self.assertTrue(os.path.exists(log_path))
+        with open(log_path) as f:
+            log_content = f.read()
+            self.assertIn(f"{source_file}: {hash_value}", log_content)
+
+        # Verify log file contents
+        log_path = os.path.join(test_dir, ".eb", "log")
+        print("\nDebug - Initial log file contents:")
+        with open(log_path, "r") as f:
+            log_content = f.read()
+            print(log_content)
 
     # Root test - Testing basic model registration
     def test_model_registration(self):
@@ -992,12 +999,12 @@ class TestEmbeddingBridgeCLI(unittest.TestCase):
         initial_hash = result1.stdout.strip().split("(")[1].rstrip(")")
         print(f"Initial hash: {initial_hash} (length: {len(initial_hash)})")
         
-        # Verify history file contents
-        history_path = os.path.join(test_dir, ".eb", "history")
-        print("\nDebug - Initial history file contents:")
-        with open(history_path, "r") as f:
-            history_content = f.read()
-            print(history_content)
+        # Verify log file contents
+        log_path = os.path.join(test_dir, ".eb", "log")
+        print("\nDebug - Initial log file contents:")
+        with open(log_path, "r") as f:
+            log_content = f.read()
+            print(log_content)
         
         # Create and store updated embedding
         updated_emb = self._create_synthetic_embedding()
@@ -1019,11 +1026,11 @@ class TestEmbeddingBridgeCLI(unittest.TestCase):
         print(f"stdout: {result2.stdout}")
         print(f"stderr: {result2.stderr}")
         
-        # Verify history file after update
-        print("\nDebug - Updated history file contents:")
-        with open(history_path, "r") as f:
-            history_content = f.read()
-            print(history_content)
+        # Verify log file after update
+        print("\nDebug - Updated log file contents:")
+        with open(log_path, "r") as f:
+            log_content = f.read()
+            print(log_content)
         
         # Verify index file contents
         index_path = os.path.join(test_dir, ".eb", "index")
@@ -1109,8 +1116,8 @@ class TestEmbeddingBridgeCLI(unittest.TestCase):
         print(f"Index contents:")
         with open(os.path.join(test_dir, ".eb", "index"), "r") as f:
             print(f.read())
-        print(f"History contents:")
-        with open(os.path.join(test_dir, ".eb", "history"), "r") as f:
+        print(f"Log contents:")
+        with open(os.path.join(test_dir, ".eb", "log"), "r") as f:
             print(f.read())
         
         # Store second version
@@ -1139,8 +1146,8 @@ class TestEmbeddingBridgeCLI(unittest.TestCase):
         print(f"Index contents:")
         with open(os.path.join(test_dir, ".eb", "index"), "r") as f:
             print(f.read())
-        print(f"History contents:")
-        with open(os.path.join(test_dir, ".eb", "history"), "r") as f:
+        print(f"Log contents:")
+        with open(os.path.join(test_dir, ".eb", "log"), "r") as f:
             print(f.read())
         
         # Update test assertions for new format

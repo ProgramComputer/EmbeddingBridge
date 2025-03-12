@@ -28,6 +28,37 @@ const char* eb_status_str(eb_status_t status)
                 return "Computation failed";
         case EB_ERROR_HASH_AMBIGUOUS:
                 return "Ambiguous hash prefix";
+                
+        /* General errors */
+        case EB_ERROR_INVALID_PARAMETER:
+                return "Invalid parameter";
+        case EB_ERROR_MEMORY:
+                return "Memory allocation failed";
+        case EB_ERROR_IO:
+                return "I/O error";
+        case EB_ERROR_ALREADY_EXISTS:
+                return "Already exists";
+        case EB_ERROR_INVALID_NAME:
+                return "Invalid name";
+        case EB_ERROR_NOT_IMPLEMENTED:
+                return "Not implemented";
+                
+        /* Remote operation errors */
+        case EB_ERROR_REMOTE_NOTFOUND:
+                return "Remote not found";
+        case EB_ERROR_REMOTE_CONNECTION:
+                return "Remote connection failed";
+        case EB_ERROR_REMOTE_AUTH:
+                return "Remote authentication failed";
+        case EB_ERROR_REMOTE_PROTOCOL:
+                return "Remote protocol error";
+        case EB_ERROR_REMOTE_REJECTED:
+                return "Remote rejected push/pull";
+        case EB_ERROR_REMOTE_CONFLICT:
+                return "Remote conflict - not fast-forward";
+        case EB_ERROR_REMOTE_TIMEOUT:
+                return "Remote operation timed out";
+                
         default:
                 return "Unknown error";
         }

@@ -8,6 +8,7 @@
 #include "colors.h"
 #include "../core/error.h"
 #include "rollback.h"
+#include "log.h"
 
 bool has_option(int argc, char** argv, const char* option) {
     for (int i = 1; i < argc; i++) {
@@ -53,6 +54,15 @@ void cli_warning(const char* fmt, ...) {
     va_list args;
     va_start(args, fmt);
     fprintf(stderr, "%swarning:%s ", COLOR_YELLOW, COLOR_RESET);
+    vfprintf(stderr, fmt, args);
+    fprintf(stderr, "\n");
+    va_end(args);
+}
+
+void cli_info(const char* fmt, ...) {
+    va_list args;
+    va_start(args, fmt);
+    fprintf(stderr, "%sinfo:%s ", COLOR_BLUE, COLOR_RESET);
     vfprintf(stderr, fmt, args);
     fprintf(stderr, "\n");
     va_end(args);
@@ -141,5 +151,6 @@ static const eb_command_t commands[] = {
     {"model", "Manage embedding models", cmd_model},
     {"rollback", "Revert to a previous embedding version", cmd_rollback},
     {"status", "Show embedding status for a source file", cmd_status},
+    {"log", "Display embedding log for files", cmd_log},
     {NULL, NULL, NULL}
 }; 

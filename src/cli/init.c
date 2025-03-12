@@ -261,7 +261,7 @@ static eb_status_t create_eb_structure(const char* root, const char* model __att
     }
 
     // Create empty history file
-    snprintf(path, sizeof(path), "%s/.eb/history", root);
+    snprintf(path, sizeof(path), "%s/.eb/log", root);
     if (write_file(path, "") != 0) {
         fprintf(stderr, "error: could not create history file\n");
         return 1;

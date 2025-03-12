@@ -16,4 +16,7 @@ char* get_relative_path(const char* abs_path, const char* repo_root);
 // Get absolute path from relative path and repo root
 char* get_absolute_path(const char* rel_path, const char* repo_root);
 
+// Get the path to the current repository
+char* get_repository_path(void);
+
 #endif 

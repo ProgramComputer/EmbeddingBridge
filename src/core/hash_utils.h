@@ -23,6 +23,9 @@ static inline char* get_short_hash(const char* full_hash) {
 
 /* Check if a short hash matches a full hash */
 static inline bool is_hash_prefix(const char* prefix, const char* full_hash) {
+        // Return true if prefix is a valid prefix of the full hash
+        // This allows using shorter hash versions like in Git
+        // For example: "abc123" will match "abc123def456..."
         return strncmp(prefix, full_hash, strlen(prefix)) == 0;
 }
 

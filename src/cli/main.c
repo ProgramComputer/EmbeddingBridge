@@ -2,6 +2,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include "cli.h"
+#include "set.h"
+#include "merge.h"
+#include "gc.h"
 
 static const char* USAGE = 
     "Usage: eb <command> [options] [args]\n"
@@ -14,11 +17,18 @@ static const char* USAGE =
     "  diff          Compare embeddings between versions\n"
     "  query         Search across embeddings\n"
     "  status        Show embedding status for a source file\n"
+    "  log           Display embedding log for files\n"
+    "  set           Manage embedding sets\n"
+    "  switch        Switch between embedding sets\n"
+    "  merge         Merge embeddings from one set to another\n"
     "\n"
     "Management Commands:\n"
     "  config        Configure embedding settings\n"
     "  remote        Manage embedding storage locations\n"
     "  hooks         Manage Git hooks\n"
+    "  model         Manage embedding models\n"
+    "  rollback      Revert to a previous embedding version\n"
+    "  gc            Garbage collect unreferenced embeddings\n"
     "\n"
     "Run 'eb <command> --help' for command-specific help\n";
 
@@ -29,6 +39,10 @@ static const eb_command_t commands[] = {
     {"diff", "Compare embeddings between versions", cmd_diff},
     {"query", "Search across embeddings", cmd_query},
     {"status", "Show embedding status for a source file", cmd_status},
+    {"log", "Display embedding log for files", cmd_log},
+    {"set", "Manage embedding sets", cmd_set},
+    {"switch", "Switch between embedding sets", cmd_switch},
+    {"merge", "Merge embeddings from one set to another", cmd_merge},
     
     // Management commands
     {"config", "Configure embedding settings", cmd_config},
@@ -37,6 +51,7 @@ static const eb_command_t commands[] = {
     
     {"model", "Manage embedding models", cmd_model},
     {"rollback", "Revert to a previous embedding version", cmd_rollback},
+    {"gc", "Garbage collect unreferenced embeddings", cmd_gc},
     
     {NULL, NULL, NULL}
 };
@@ -74,9 +89,16 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Global help shows version
-    if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
+    // Handle --version flag
+    if (strcmp(argv[1], "--version") == 0 || strcmp(argv[1], "-v") == 0) {
         printf("eb version %s\n", EB_VERSION_STR);
+        return 0;
+    }
+
+    // Global help shows version and full usage text
+    if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0) {
+        printf("eb version %s\n\n", EB_VERSION_STR);
+        print_usage();
         return 0;
     }
 

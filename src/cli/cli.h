@@ -31,6 +31,8 @@ typedef struct {
 
 typedef struct {
     const char* model;          // Model to use for embedding
+    const char* models;         // Models to use for diff (comma-separated)
+    const char* second_model;   // Second model parsed from models
     bool use_git;              // Whether to use Git integration
     bool use_file;             // Use file as input (for query)
     bool use_color;            // Use colored output
@@ -56,6 +58,11 @@ int cmd_remote(int argc, char** argv);
 int cmd_model(int argc, char** argv);
 int cmd_rollback(int argc, char** argv);
 int cmd_status(int argc, char **argv);
+int cmd_log(int argc, char **argv);
+int cmd_set(int argc, char **argv);
+int cmd_switch(int argc, char **argv);
+int cmd_merge(int argc, char **argv);
+int cmd_gc(int argc, char **argv);
 
 // Option parsing
 bool parse_cli_options(int argc, char** argv, eb_cli_options_t* opts);
@@ -71,15 +78,17 @@ const char* get_model(int argc, char** argv);
 void handle_error(eb_status_t status, const char* context);
 void cli_error(const char* fmt, ...);
 void cli_warning(const char* fmt, ...);
+void cli_info(const char* fmt, ...);
 
 // Store operation functions
 /* Store precomputed embedding file
  * @param embedding_file: Path to the precomputed embedding (.bin or .npy)
  * @param dims: Number of dimensions (0 for .npy auto-detect)
  * @param source_file: Original source file
+ * @param model: Model/provider name (can be NULL)
  * @return: 0 on success, 1 on error
  */
-int store_precomputed(const char *embedding_file, size_t dims, const char *source_file);
+int store_precomputed(const char *embedding_file, size_t dims, const char *source_file, const char *model);
 
 /* Store embedding from source file
  * @param source_file: Source file to generate embedding from

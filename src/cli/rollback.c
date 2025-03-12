@@ -15,6 +15,8 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #include <time.h>
+#include <linux/limits.h>  // For PATH_MAX on Linux
+#include <ctype.h>  // For isdigit
 #include "cli.h"
 #include "colors.h"
 #include "../core/store.h"
@@ -23,12 +25,19 @@
 #include "../core/debug.h"
 #include "../core/hash_utils.h"
 
+/* Function declarations */
+void cli_info(const char* format, ...);
+
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
 #define MAX_LINE_LEN 2048
 #define MAX_PATH_LEN PATH_MAX
 #define MAX_HASH_LEN 65
 
 static const char* ROLLBACK_USAGE =
-    "Usage: eb rollback <hash> <source>\n"
+    "Usage: eb rollback [options] <hash> <source>\n"
     "\n"
     "Revert a source file's embedding to a previous hash.\n"
     "\n"
@@ -36,8 +45,13 @@ static const char* ROLLBACK_USAGE =
     "  <hash>    Hash to rollback to\n"
     "  <source>  Source file to rollback\n"
     "\n"
+    "Options:\n"
+    "  --model <model>  Specify model to rollback (required for multi-model repos)\n"
+    "\n"
     "Examples:\n"
-    "  eb rollback eb82a9c file.txt  # Rollback file.txt to hash eb82a9c\n";
+    "  eb rollback eb82a9c file.txt                # Rollback file.txt to hash eb82a9c\n"
+    "  eb rollback --model openai-3 eb82a9c file.txt  # Rollback OpenAI embedding to hash eb82a9c\n"
+    "  eb rollback --model voyage-2 4639f61 file.txt  # Rollback Voyage embedding to hash 4639f61\n";
 
 /* Find repository root directory */
 static eb_status_t find_repo_root(char* root_path, size_t size) 
@@ -67,14 +81,16 @@ static eb_status_t find_repo_root(char* root_path, size_t size)
 }
 
 /* Helper function to check if a hash exists in the history for a source file */
-static bool hash_in_history(const char* repo_root, const char* source_file, const char* hash_to_rollback) 
+static bool hash_in_history(const char* repo_root, const char* source_file, const char* hash_to_rollback, const char* model) 
 {
-        char history_path[PATH_MAX];
-        snprintf(history_path, sizeof(history_path), "%s/.eb/history", repo_root);
+        char log_path[PATH_MAX];
+        snprintf(log_path, sizeof(log_path), "%s/.eb/log", repo_root);
         
-        DEBUG_PRINT("Checking history file: %s\n", history_path);
+        DEBUG_PRINT("Checking log file: %s\n", log_path);
+        DEBUG_PRINT("Looking for hash: %s, source: %s, model: %s\n", 
+                   hash_to_rollback, source_file, model ? model : "(default)");
         
-        FILE* hist_file = fopen(history_path, "r");
+        FILE* hist_file = fopen(log_path, "r");
         if (!hist_file) {
                 DEBUG_PRINT("Could not open history file\n");
                 return false;
@@ -95,14 +111,31 @@ static bool hash_in_history(const char* repo_root, const char* source_file, cons
 
         char line[2048];
         while (fgets(line, sizeof(line), hist_file)) {
-                time_t timestamp;
                 char file_path_hist[PATH_MAX];
                 char hash_hist[65];
+                char timestamp_str[32];
+                char model_hist[128] = "";
                 line[strcspn(line, "\n")] = 0;
                 
                 DEBUG_PRINT("Reading line: %s\n", line);
                 
-                if (sscanf(line, "%ld %s %s", &timestamp, hash_hist, file_path_hist) == 3) {
+                // Try to parse with the format: timestamp hash source model
+                // Format: [timestamp] [hash] [source_file] [model]
+                int parsed = sscanf(line, "%s %s %s %s", timestamp_str, hash_hist, file_path_hist, model_hist);
+                
+                // If we have a model specified and the line has a model
+                if (model && parsed == 4) {
+                    DEBUG_PRINT("Line has model: %s\n", model_hist);
+                    
+                    // Skip if models don't match
+                    if (strcmp(model, model_hist) != 0) {
+                        DEBUG_PRINT("Models don't match: %s != %s\n", model, model_hist);
+                        continue;
+                    }
+                }
+                
+                // If we parsed at least timestamp, hash, and source
+                if (parsed >= 3) {
                         DEBUG_PRINT("Comparing paths - History: %s, Source: %s\n", 
                                 file_path_hist, rel_source);
                         DEBUG_PRINT("Comparing hashes - History: %s, Target: %s\n", 
@@ -215,71 +248,586 @@ static eb_status_t update_index_entry(const char* repo_root, const char* source_
         return EB_SUCCESS;
 }
 
-int cmd_rollback(int argc, char** argv) 
+/* Check if a file has embeddings from multiple models */
+static bool has_multiple_models_for_file(const char* repo_root, const char* file_path) 
 {
-        if (argc != 3 || has_option(argc, argv, "-h") || has_option(argc, argv, "--help")) {
-                printf("%s", ROLLBACK_USAGE);
-                return (argc != 3) ? 1 : 0;
-        }
-
-        const char* hash_to_rollback = argv[1];
-        const char* source_file = argv[2];
-        char repo_root[PATH_MAX];
-        char abs_source_path[PATH_MAX];
-        eb_status_t status;
-
-        /* Debug output */
-        DEBUG_PRINT("Rollback called with:\n  Hash: %s (length: %zu)\n  Source: %s\n",
-                   hash_to_rollback, strlen(hash_to_rollback), source_file);
-
-        /* Basic hash format validation */
-        size_t hash_len = strlen(hash_to_rollback);
-        if (hash_len < 7 || hash_len > 64) {
-                cli_error("Invalid hash format: Hash must be between 7 and 64 characters (got %zu)", hash_len);
-                return 1;
-        }
-
-        /* Find repository root */
-        status = find_repo_root(repo_root, sizeof(repo_root));
-        if (status != EB_SUCCESS) {
-                cli_error("Not in an embedding repository");
-                return 1;
-        }
-
-        /* Convert source file to absolute path */
-        if (source_file[0] != '/') {
-                char cwd[PATH_MAX];
-                if (!getcwd(cwd, sizeof(cwd))) {
-                        cli_error("Failed to get current directory");
-                        return 1;
+        char log_path[PATH_MAX];
+        snprintf(log_path, sizeof(log_path), "%s/.eb/log", repo_root);
+        
+        FILE* fp = fopen(log_path, "r");
+        if (!fp) return false;
+        
+        char line[1024];
+        int model_count = 0;
+        char models[10][64] = {0}; // Store up to 10 different models
+        
+        while (fgets(line, sizeof(line), fp)) {
+                // Remove newline
+                size_t len = strlen(line);
+                if (len > 0 && line[len-1] == '\n') line[len-1] = '\0';
+                
+                // Parse line to extract file path and model
+                char* line_file_path = NULL;
+                char* model = NULL;
+                
+                // Check for newer format (timestamp hash file model)
+                char* token = strtok(line, " ");
+                if (token && (isdigit(token[0]) || token[0] == '-')) {
+                        // Skip timestamp and hash
+                        token = strtok(NULL, " "); // hash
+                        if (!token) continue;
+                        
+                        token = strtok(NULL, " "); // file path
+                        if (!token) continue;
+                        line_file_path = token;
+                        
+                        token = strtok(NULL, " "); // model
+                        if (!token) continue;
+                        model = token;
+                } else {
+                        // Older format (file hash timestamp model)
+                        line_file_path = token;
+                        
+                        // Skip hash and timestamp
+                        token = strtok(NULL, " "); // hash
+                        if (!token) continue;
+                        
+                        token = strtok(NULL, " "); // timestamp
+                        if (!token) continue;
+                        
+                        token = strtok(NULL, " "); // model
+                        if (!token) continue;
+                        model = token;
                 }
-                snprintf(abs_source_path, sizeof(abs_source_path), "%s/%s", cwd, source_file);
-        } else {
-                strncpy(abs_source_path, source_file, sizeof(abs_source_path) - 1);
-                abs_source_path[sizeof(abs_source_path) - 1] = '\0';
+                
+                // Check if this is for our file
+                if (line_file_path && strcmp(line_file_path, file_path) == 0) {
+                        // Check if we've seen this model before
+                        bool found = false;
+                        for (int i = 0; i < model_count; i++) {
+                                if (strcmp(models[i], model) == 0) {
+                                        found = true;
+                                        break;
+                                }
+                        }
+                        
+                        // If not, add it to our list
+                        if (!found && model_count < 10) {
+                                strncpy(models[model_count], model, 63);
+                                models[model_count][63] = '\0';
+                                model_count++;
+                        }
+                }
         }
+        
+        fclose(fp);
+        return model_count > 1;
+}
 
-        DEBUG_PRINT("Using absolute source path: %s\n", abs_source_path);
-
-        /* Check if hash exists in history for the source file */
-        char full_hash[65];
-        strncpy(full_hash, hash_to_rollback, sizeof(full_hash) - 1);
-        full_hash[sizeof(full_hash) - 1] = '\0';
-
-        if (!hash_in_history(repo_root, abs_source_path, full_hash)) {
-                cli_error("Hash '%s' not found in history for source file '%s'", 
-                         hash_to_rollback, source_file);
-                return 1;
+/* Get a comma-separated list of available models for a file */
+static char* get_available_models_for_file(const char* repo_root, const char* file_path) 
+{
+        static char model_list[512] = {0};
+        model_list[0] = '\0';
+        
+        char log_path[PATH_MAX];
+        snprintf(log_path, sizeof(log_path), "%s/.eb/log", repo_root);
+        
+        FILE* fp = fopen(log_path, "r");
+        if (!fp) return model_list;
+        
+        char line[1024];
+        int model_count = 0;
+        char models[10][64] = {0}; // Store up to 10 different models
+        
+        while (fgets(line, sizeof(line), fp)) {
+                // Remove newline
+                size_t len = strlen(line);
+                if (len > 0 && line[len-1] == '\n') line[len-1] = '\0';
+                
+                // Parse line to extract file path and model
+                char* line_file_path = NULL;
+                char* model = NULL;
+                
+                // Check for newer format (timestamp hash file model)
+                char* token = strtok(line, " ");
+                if (token && (isdigit(token[0]) || token[0] == '-')) {
+                        // Skip timestamp and hash
+                        token = strtok(NULL, " "); // hash
+                        if (!token) continue;
+                        
+                        token = strtok(NULL, " "); // file path
+                        if (!token) continue;
+                        line_file_path = token;
+                        
+                        token = strtok(NULL, " "); // model
+                        if (!token) continue;
+                        model = token;
+                } else {
+                        // Older format (file hash timestamp model)
+                        line_file_path = token;
+                        
+                        // Skip hash and timestamp
+                        token = strtok(NULL, " "); // hash
+                        if (!token) continue;
+                        
+                        token = strtok(NULL, " "); // timestamp
+                        if (!token) continue;
+                        
+                        token = strtok(NULL, " "); // model
+                        if (!token) continue;
+                        model = token;
+                }
+                
+                // Check if this is for our file
+                if (line_file_path && strcmp(line_file_path, file_path) == 0) {
+                        // Check if we've seen this model before
+                        bool found = false;
+                        for (int i = 0; i < model_count; i++) {
+                                if (strcmp(models[i], model) == 0) {
+                                        found = true;
+                                        break;
+                                }
+                        }
+                        
+                        // If not, add it to our list
+                        if (!found && model_count < 10) {
+                                strncpy(models[model_count], model, 63);
+                                models[model_count][63] = '\0';
+                                model_count++;
+                        }
+                }
         }
+        
+        fclose(fp);
+        
+        // Build comma-separated list
+        for (int i = 0; i < model_count; i++) {
+                if (i > 0) strcat(model_list, ", ");
+                strcat(model_list, models[i]);
+        }
+        
+        return model_list;
+}
 
-        /* Update index file */
+/* Get the default model for a file (the only model, or NULL if multiple) */
+static const char* get_default_model_for_file(const char* repo_root, const char* file_path) 
+{
+        static char default_model[64] = {0};
+        default_model[0] = '\0';
+        
+        char log_path[PATH_MAX];
+        snprintf(log_path, sizeof(log_path), "%s/.eb/log", repo_root);
+        
+        FILE* fp = fopen(log_path, "r");
+        if (!fp) return NULL;
+        
+        char line[1024];
+        int model_count = 0;
+        
+        while (fgets(line, sizeof(line), fp)) {
+                // Remove newline
+                size_t len = strlen(line);
+                if (len > 0 && line[len-1] == '\n') line[len-1] = '\0';
+                
+                // Parse line to extract file path and model
+                char* line_file_path = NULL;
+                char* model = NULL;
+                
+                // Check for newer format (timestamp hash file model)
+                char* token = strtok(line, " ");
+                if (token && (isdigit(token[0]) || token[0] == '-')) {
+                        // Skip timestamp and hash
+                        token = strtok(NULL, " "); // hash
+                        if (!token) continue;
+                        
+                        token = strtok(NULL, " "); // file path
+                        if (!token) continue;
+                        line_file_path = token;
+                        
+                        token = strtok(NULL, " "); // model
+                        if (!token) continue;
+                        model = token;
+                } else {
+                        // Older format (file hash timestamp model)
+                        line_file_path = token;
+                        
+                        // Skip hash and timestamp
+                        token = strtok(NULL, " "); // hash
+                        if (!token) continue;
+                        
+                        token = strtok(NULL, " "); // timestamp
+                        if (!token) continue;
+                        
+                        token = strtok(NULL, " "); // model
+                        if (!token) continue;
+                        model = token;
+                }
+                
+                // Check if this is for our file
+                if (line_file_path && strcmp(line_file_path, file_path) == 0) {
+                        // If we already found a different model, return NULL (multiple models)
+                        if (model_count > 0 && strcmp(default_model, model) != 0) {
+                                fclose(fp);
+                                return NULL;
+                        }
+                        
+                        // Store this model
+                        strncpy(default_model, model, 63);
+                        default_model[63] = '\0';
+                        model_count++;
+                }
+        }
+        
+        fclose(fp);
+        
+        // Return the model if we found exactly one
+        return model_count == 1 ? default_model : NULL;
+}
+
+/* Update the HEAD file to track the current hash for a model */
+static eb_status_t update_head_file(const char* repo_root, const char* source_file, 
+                                   const char* hash_to_rollback, const char* model) {
+        char head_path[PATH_MAX];
+        char temp_path[PATH_MAX];
+        FILE *head_fp, *temp_fp;
+        char line[MAX_LINE_LEN];
+        bool found = false;
+        
+        DEBUG_PRINT("update_head_file: Starting with repo_root=%s, source=%s, hash=%s, model=%s\n",
+                   repo_root, source_file, hash_to_rollback, model);
+        
+        /* Convert absolute path to relative if needed */
+        const char* rel_source = source_file;
+        size_t root_len = strlen(repo_root);
+        if (strncmp(source_file, repo_root, root_len) == 0) {
+                rel_source = source_file + root_len;
+                if (*rel_source == '/')
+                        rel_source++; /* Skip leading slash */
+        }
+        
+        /* Build paths */
+        snprintf(head_path, sizeof(head_path), "%s/.eb/HEAD", repo_root);
+        snprintf(temp_path, sizeof(temp_path), "%s/.eb/HEAD.tmp", repo_root);
+        
+        /* Open HEAD file for reading */
+        head_fp = fopen(head_path, "r");
+        if (!head_fp) {
+                /* If HEAD doesn't exist, create it */
+                head_fp = fopen(head_path, "w");
+                if (!head_fp) {
+                        DEBUG_PRINT("update_head_file: Failed to create HEAD file\n");
+                        return EB_ERROR_FILE_IO;
+                }
+                fprintf(head_fp, "ref: %s %s\n", model, hash_to_rollback);
+                fclose(head_fp);
+                return EB_SUCCESS;
+        }
+        
+        /* Create temp file for writing */
+        temp_fp = fopen(temp_path, "w");
+        if (!temp_fp) {
+                fclose(head_fp);
+                DEBUG_PRINT("update_head_file: Failed to create temp file\n");
+                return EB_ERROR_FILE_IO;
+        }
+        
+        /* Read HEAD and update/add entry */
+        while (fgets(line, sizeof(line), head_fp)) {
+                char curr_model[128];
+                char curr_hash[65];
+                
+                /* Remove newline */
+                line[strcspn(line, "\n")] = 0;
+                
+                if (sscanf(line, "ref: %s %s", curr_model, curr_hash) == 2) {
+                        if (strcmp(curr_model, model) == 0) {
+                                /* Update existing model reference */
+                                fprintf(temp_fp, "ref: %s %s\n", model, hash_to_rollback);
+                                found = true;
+                        } else {
+                                /* Keep other model references unchanged */
+                                fprintf(temp_fp, "%s\n", line);
+                        }
+                } else {
+                        /* Keep any other lines unchanged */
+                        fprintf(temp_fp, "%s\n", line);
+                }
+        }
+        
+        /* Add new model reference if not found */
+        if (!found) {
+                fprintf(temp_fp, "ref: %s %s\n", model, hash_to_rollback);
+        }
+        
+        /* Close files */
+        fclose(head_fp);
+        fclose(temp_fp);
+        
+        /* Replace original HEAD with temp file */
+        if (rename(temp_path, head_path) != 0) {
+                DEBUG_PRINT("update_head_file: Failed to replace HEAD file\n");
+                return EB_ERROR_FILE_IO;
+        }
+        
+        DEBUG_PRINT("update_head_file: Successfully updated HEAD file\n");
+        return EB_SUCCESS;
+}
+
+/* Get current hash for a specific model from HEAD */
+static eb_status_t get_head_hash(const char* repo_root, const char* model, char* hash_out, size_t hash_size) {
+        char head_path[PATH_MAX];
+        FILE* head_fp;
+        char line[MAX_LINE_LEN];
+        
+        snprintf(head_path, sizeof(head_path), "%s/.eb/HEAD", repo_root);
+        
+        head_fp = fopen(head_path, "r");
+        if (!head_fp) {
+                DEBUG_PRINT("get_head_hash: HEAD file not found\n");
+                return EB_ERROR_NOT_FOUND;
+        }
+        
+        while (fgets(line, sizeof(line), head_fp)) {
+                char curr_model[128];
+                char curr_hash[65];
+                
+                line[strcspn(line, "\n")] = 0;
+                
+                if (sscanf(line, "ref: %s %s", curr_model, curr_hash) == 2) {
+                        if (strcmp(curr_model, model) == 0) {
+                                strncpy(hash_out, curr_hash, hash_size - 1);
+                                hash_out[hash_size - 1] = '\0';
+                                fclose(head_fp);
+                                return EB_SUCCESS;
+                        }
+                }
+        }
+        
+        fclose(head_fp);
+        return EB_ERROR_NOT_FOUND;
+}
+
+/* Find the complete hash from a partial hash */
+static eb_status_t resolve_hash(
+    const char* repo_root,
+    const char* partial_hash,
+    const char* source_file, 
+    const char* model,
+    char* full_hash_out,
+    size_t hash_size
+) {
+    char log_path[PATH_MAX];
+    snprintf(log_path, sizeof(log_path), "%s/.eb/log", repo_root);
+    DEBUG_PRINT("resolve_hash: Log path: %s\n", log_path);
+    
+    char index_path[PATH_MAX];
+    snprintf(index_path, sizeof(index_path), "%s/.eb/index", repo_root);
+    
+    char full_matched_hash[65] = {0};
+    bool single_match_found = false;
+    int match_count = 0;
+    
+    DEBUG_PRINT("resolve_hash: Starting with repo_root=%s, partial_hash=%s, model=%s\n", 
+               repo_root, partial_hash, model ? model : "(none)");
+    
+    // Convert absolute source path to relative path
+    const char* rel_source = source_file;
+    size_t root_len = strlen(repo_root);
+    if (strncmp(source_file, repo_root, root_len) == 0) {
+        rel_source = source_file + root_len;
+        if (*rel_source == '/') rel_source++; // Skip leading slash
+    }
+    
+    DEBUG_PRINT("resolve_hash: Using relative source path: %s\n", rel_source);
+    
+    FILE* hist_file = fopen(log_path, "r");
+    if (!hist_file) {
+        DEBUG_PRINT("resolve_hash: Could not open log file %s\n", log_path);
+        return EB_ERROR_FILE_IO;
+    }
+    
+    DEBUG_PRINT("resolve_hash: Successfully opened history file\n");
+    
+    char line[2048];
+    while (fgets(line, sizeof(line), hist_file)) {
+        char file_path_hist[PATH_MAX];
+        char hash_hist[65];
+        char timestamp_str[32];
+        char model_hist[128] = "";
+        line[strcspn(line, "\n")] = 0;
+        
+        DEBUG_PRINT("resolve_hash: Processing line: %s\n", line);
+        
+        // Try to parse with the format: timestamp hash source model
+        int parsed = sscanf(line, "%s %s %s %s", timestamp_str, hash_hist, file_path_hist, model_hist);
+        
+        DEBUG_PRINT("resolve_hash: Parsed %d fields: timestamp=%s, hash=%s, file=%s, model=%s\n", 
+                  parsed, timestamp_str, hash_hist, file_path_hist, 
+                  parsed == 4 ? model_hist : "(none)");
+        
+        // If we have a model specified and the line has a model
+        if (model && parsed == 4) {
+            DEBUG_PRINT("resolve_hash: Comparing models: specified [%s] vs. history [%s]\n", 
+                      model, model_hist);
+            
+            // Skip if models don't match
+            if (strcmp(model, model_hist) != 0) {
+                DEBUG_PRINT("resolve_hash: Models don't match, skipping\n");
+                continue;
+            }
+        }
+        
+        // If we parsed at least timestamp, hash, and source
+        if (parsed >= 3) {
+            DEBUG_PRINT("resolve_hash: Comparing files: [%s] vs. [%s]\n", file_path_hist, rel_source);
+            DEBUG_PRINT("resolve_hash: Checking if [%s] is a prefix of [%s]\n", partial_hash, hash_hist);
+            
+            if (strcmp(file_path_hist, rel_source) == 0) {
+                DEBUG_PRINT("resolve_hash: File paths match\n");
+                
+                // Check if the partial hash is a prefix of the full hash
+                size_t prefix_len = strlen(partial_hash);
+                if (strncmp(partial_hash, hash_hist, prefix_len) == 0) {
+                    DEBUG_PRINT("resolve_hash: Hash prefix matches! partial=%s, full=%s\n", 
+                              partial_hash, hash_hist);
+                    match_count++;
+                    if (match_count == 1) {
+                        strncpy(full_matched_hash, hash_hist, sizeof(full_matched_hash) - 1);
+                        full_matched_hash[sizeof(full_matched_hash) - 1] = '\0';
+                        DEBUG_PRINT("resolve_hash: Stored first match: %s\n", full_matched_hash);
+                    }
+                } else {
+                    DEBUG_PRINT("resolve_hash: Hash prefix does not match\n");
+                }
+            } else {
+                DEBUG_PRINT("resolve_hash: File paths don't match\n");
+            }
+        }
+    }
+    
+    fclose(hist_file);
+    
+    DEBUG_PRINT("resolve_hash: Found %d matches\n", match_count);
+    
+    if (match_count > 1) {
+        DEBUG_PRINT("resolve_hash: Multiple matches found for hash prefix\n");
+        return EB_ERROR_HASH_AMBIGUOUS;
+    } else if (match_count == 1) {
+        single_match_found = true;
+        DEBUG_PRINT("resolve_hash: Single match found: %s\n", full_matched_hash);
+    } else {
+        DEBUG_PRINT("resolve_hash: No matches found\n");
+        return EB_ERROR_NOT_FOUND;
+    }
+
+    /* At end of function, update the full hash with matched hash */
+    if (single_match_found) {
+        DEBUG_PRINT("resolve_hash: Returning full hash: %s\n", full_matched_hash);
+        
+        if (full_hash_out && hash_size > 0) {
+            strncpy(full_hash_out, full_matched_hash, hash_size - 1);
+            full_hash_out[hash_size - 1] = '\0';
+            DEBUG_PRINT("resolve_hash: Copied hash to output buffer: %s\n", full_hash_out);
+        }
+        
+        return EB_SUCCESS;
+    }
+    
+    return EB_ERROR_NOT_FOUND;
+}
+
+/* Main rollback command handler */
+int cmd_rollback(int argc, char** argv) {
+    char repo_root[PATH_MAX];
+    char abs_source_path[PATH_MAX];
+    char full_hash[65] = {0};
+    const char* model = NULL;
+    const char* hash = NULL;
+    const char* source = NULL;
+    eb_status_t status;
+    
+    // Parse command line arguments
+    DEBUG_PRINT("cmd_rollback: Starting with %d arguments\n", argc);
+    
+    // Skip the command name (argv[0] is "rollback")
+    for (int i = 1; i < argc; i++) {
+        DEBUG_PRINT("cmd_rollback: argv[%d] = '%s'\n", i, argv[i]);
+        if (strcmp(argv[i], "--model") == 0 && i + 1 < argc) {
+            model = argv[++i];
+            DEBUG_PRINT("cmd_rollback: Found model argument: %s\n", model);
+        } else if (hash == NULL) {
+            hash = argv[i];
+            DEBUG_PRINT("cmd_rollback: Found hash argument: %s\n", hash);
+        } else if (source == NULL) {
+            source = argv[i];
+            DEBUG_PRINT("cmd_rollback: Found source argument: %s\n", source);
+        }
+    }
+    
+    // Check if required arguments are provided
+    if (!hash || !source) {
+        fprintf(stderr, "Error: Missing required arguments.\n");
+        fprintf(stderr, "%s", ROLLBACK_USAGE);
+        DEBUG_PRINT("cmd_rollback: Missing required arguments, hash=%p, source=%p\n", 
+                  (void*)hash, (void*)source);
+        return 1;
+    }
+    
+    DEBUG_PRINT("cmd_rollback: Using hash=%s, source=%s, model=%s\n", 
+               hash, source, model ? model : "(none)");
+    
+    // Find repository root
+    status = find_repo_root(repo_root, sizeof(repo_root));
+    if (status != EB_SUCCESS) {
+        fprintf(stderr, "Error: Not in an embedding-bridge repository.\n");
+        DEBUG_PRINT("cmd_rollback: Failed to find repo root, status=%d\n", status);
+        return 1;
+    }
+    
+    DEBUG_PRINT("cmd_rollback: Found repository root: %s\n", repo_root);
+    
+    // Get absolute path for source file
+    if (!realpath(source, abs_source_path)) {
+        fprintf(stderr, "Error: Could not resolve path for %s.\n", source);
+        DEBUG_PRINT("cmd_rollback: Failed to resolve path for %s\n", source);
+        return 1;
+    }
+    
+    DEBUG_PRINT("cmd_rollback: Resolved absolute source path: %s\n", abs_source_path);
+    
+    // Resolve partial hash to full hash
+    DEBUG_PRINT("cmd_rollback: Calling resolve_hash with hash=%s\n", hash);
+    status = resolve_hash(repo_root, hash, abs_source_path, model, full_hash, sizeof(full_hash));
+    
+    /* After successful hash resolution, update the index and HEAD file */
+    if (status == EB_SUCCESS) {
+        DEBUG_PRINT("cmd_rollback: resolve_hash succeeded, full_hash=%s\n", full_hash);
+        
+        /* Update the index first */
         status = update_index_entry(repo_root, abs_source_path, full_hash);
-        if (status != EB_SUCCESS) {
-                handle_error(status, "Failed to update index");
-                return 1;
+        
+        if (status == EB_SUCCESS) {
+            DEBUG_PRINT("cmd_rollback: update_index_entry succeeded\n");
+            
+        /* Update the HEAD file too to ensure consistency */
+        eb_status_t head_status = update_head_file(repo_root, abs_source_path, full_hash, model);
+        if (head_status != EB_SUCCESS) {
+            DEBUG_PRINT("Warning: Failed to update HEAD file, status=%d\n", head_status);
+            /* Continue anyway since index was updated */
+            } else {
+                DEBUG_PRINT("cmd_rollback: update_head_file succeeded\n");
+                printf("Successfully rolled back %s to version %s\n", source, full_hash);
+            }
+            return 0;
+        } else {
+            fprintf(stderr, "Error: Failed to update index, status=%d\n", status);
+            DEBUG_PRINT("cmd_rollback: update_index_entry failed, status=%d\n", status);
         }
-
-        printf(COLOR_BOLD_GREEN "✓ Rolled back '%s' to %s" COLOR_RESET "\n", 
-               source_file, get_short_hash(full_hash));
-        return 0;
+    } else {
+        fprintf(stderr, "Error: Could not resolve hash %s, status=%d\n", hash, status);
+        DEBUG_PRINT("cmd_rollback: resolve_hash failed, status=%d\n", status);
+    }
+    
+    return 1;
 } 

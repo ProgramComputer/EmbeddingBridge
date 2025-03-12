@@ -9,7 +9,8 @@ else
     CFLAGS += -O2
 endif
 
-LDFLAGS = -lm -lssl -lcrypto -lgit2 -lnpy_array
+# Add curl for HTTP transport
+LDFLAGS = -lm -lssl -lcrypto -lgit2 -lnpy_array -lcurl
 
 # Installation paths - default to user-local installation
 PREFIX ?= $(HOME)/.local
@@ -31,6 +32,9 @@ CORE_OBJS = $(CORE_SRCS:$(SRC_DIR)/%.c=$(OBJ_DIR)/%.o)
 CLI_OBJS = $(CLI_SRCS:src/cli/%.c=$(OBJ_DIR)/cli_%.o)
 OBJS = $(CORE_OBJS) $(CLI_OBJS)
 
+# Additional dependencies for transport
+TRANSPORT_DEPS = $(OBJ_DIR)/transport.o $(OBJ_DIR)/transport_ssh.o $(OBJ_DIR)/transport_http.o $(OBJ_DIR)/transport_local.o
+
 # Test files
 TEST_SRCS = $(wildcard $(TEST_DIR)/*.c)
 TEST_OBJS = $(TEST_SRCS:$(TEST_DIR)/%.c=$(OBJ_DIR)/%.o)
@@ -41,7 +45,7 @@ TARGET = $(BIN_DIR)/embedding_bridge
 LIB_TARGET = $(LIB_DIR)/libembedding_bridge.so
 
 # Main targets
-.PHONY: all clean test lib python-test valgrind memtest test-registry test-all test-c
+.PHONY: all clean test lib python-test valgrind memtest test-registry test-all test-c test-transport
 
 all: $(TARGET) lib
 
@@ -50,7 +54,7 @@ lib: $(LIB_TARGET)
 # Test targets organized by type
 test-all: test-c python-test
 
-test-c: memtest test-registry
+test-c: memtest test-registry test-transport
 	@echo "All C tests completed successfully"
 
 test: test-all
@@ -58,6 +62,10 @@ test: test-all
 test-registry: $(TEST_BIN_DIR)/test_model_registry
 	@echo "Running model registry tests..."
 	$(TEST_BIN_DIR)/test_model_registry
+
+test-transport: $(TEST_BIN_DIR)/test_transport
+	@echo "Running transport tests..."
+	$(TEST_BIN_DIR)/test_transport
 
 python-test: install
 	@echo "Running Python CLI tests..."
@@ -68,6 +76,10 @@ memtest: $(TEST_BIN_DIR)/test_lib
 	$(TEST_BIN_DIR)/test_lib
 
 $(TEST_BIN_DIR)/test_lib: $(OBJ_DIR)/test_lib.o $(OBJ_DIR)/store.o $(OBJ_DIR)/error.o $(OBJ_DIR)/git.o $(OBJ_DIR)/embedding.o $(OBJ_DIR)/metrics.o
+	@mkdir -p $(TEST_BIN_DIR)
+	$(CC) $^ -o $@ $(LDFLAGS)
+
+$(TEST_BIN_DIR)/test_transport: $(OBJ_DIR)/test_transport.o $(TRANSPORT_DEPS) $(OBJ_DIR)/error.o $(OBJ_DIR)/debug.o $(OBJ_DIR)/config.o $(OBJ_DIR)/fs.o
 	@mkdir -p $(TEST_BIN_DIR)
 	$(CC) $^ -o $@ $(LDFLAGS)
 

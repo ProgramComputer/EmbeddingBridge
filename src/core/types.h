@@ -264,4 +264,24 @@ typedef struct {
     uint8_t hash[32];
 } eb_object_header_t;
 
+/**
+ * Remote repository configuration
+ */
+typedef struct {
+    char name[100];       /* Remote name (e.g., "origin") */
+    char url[1024];       /* Remote URL */
+    char fetch_spec[256]; /* Pattern for fetching sets (similar to Git's refspec) */
+    char push_spec[256];  /* Pattern for pushing sets */
+} eb_remote_t;
+
+/**
+ * Remote operation result
+ */
+typedef struct {
+    eb_status_t status;      /* Operation status code */
+    char message[1024];      /* Status message */
+    size_t transferred;      /* Number of embeddings transferred */
+    size_t total_size;       /* Total size transferred in bytes */
+} eb_remote_result_t;
+
 #endif // EB_TYPES_H 

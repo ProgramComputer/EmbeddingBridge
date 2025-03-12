@@ -80,7 +80,10 @@ eb_status_t eb_store_get_path(
 
 /* Get current hash for a source file */
 eb_status_t get_current_hash(const char* root, const char* source, 
-                           char* hash, size_t hash_size); 
+                           char* hash_out, size_t hash_size);
+
+eb_status_t get_current_hash_with_model(const char* root, const char* source, const char* model,
+                           char* hash_out, size_t hash_size);
 
 /*
  * Metadata management

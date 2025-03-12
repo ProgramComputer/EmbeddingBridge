@@ -84,6 +84,9 @@ int cmd_query(int argc, char** argv) {
         return (argc < 2) ? 1 : 0;
     }
 
+    // Add a clear message that the command is still under development
+    printf("Note: The query command is still under development and has limited functionality.\n\n");
+
     eb_cli_options_t opts = {
         .model = NULL,  // Must be specified or configured
         .top_k = 5,
@@ -149,9 +152,15 @@ int cmd_query(int argc, char** argv) {
     }
 
     if (status != EB_SUCCESS) {
-        clear_progress();
-        handle_error(status, "Failed to create query embedding");
-        return 1;
+        // Check if it's specifically a "Not found" error which likely means the embedding function isn't implemented
+        if (status == EB_ERROR_NOT_FOUND) {
+            fprintf(stderr, "Error: Query functionality is not fully implemented yet.\n");
+            fprintf(stderr, "The system cannot create embeddings for query text at this time.\n");
+            return 1;
+        } else {
+            handle_error(status, "Failed to create query embedding");
+            return 1;
+        }
     }
 
     // Search for similar embeddings

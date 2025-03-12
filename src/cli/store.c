@@ -98,7 +98,7 @@ static int write_metadata(const char *meta_path, const char *source_file, const 
     fprintf(f, "{\n");
     fprintf(f, "  \"source\": \"%s\",\n", source_file);
     fprintf(f, "  \"timestamp\": \"%s\",\n", timestamp);
-    fprintf(f, "  \"model\": \"%s\"\n", model_type);
+    fprintf(f, "  \"model\": \"%s\"\n", model_type ? model_type : "default");
     fprintf(f, "}\n");
 
     if (ferror(f)) {
@@ -243,14 +243,15 @@ static bool ends_with(const char *str, const char *suffix) {
 }
 
 static bool cli_store_embedding_file(const char *embedding_path, const char *source_file,
-                               const char *base_dir) {
+                               const char *base_dir, const char *model) {
     DEBUG_PRINT("cli_store_embedding_file: Starting storage operation");
     DEBUG_PRINT("  embedding_path: %s", embedding_path);
     DEBUG_PRINT("  source_file: %s", source_file);
     DEBUG_PRINT("  base_dir: %s", base_dir);
+    DEBUG_PRINT("  model: %s", model ? model : "unknown");
 
     // Call the core implementation
-    eb_status_t status = store_embedding_file(embedding_path, source_file, base_dir);
+    eb_status_t status = store_embedding_file(embedding_path, source_file, base_dir, model);
     if (status != EB_SUCCESS) {
         cli_error("Failed to store embedding");
         return false;
@@ -260,7 +261,7 @@ static bool cli_store_embedding_file(const char *embedding_path, const char *sou
     return true;
 }
 
-int store_precomputed(const char *embedding_file, size_t dims, const char *source_file) {
+int store_precomputed(const char *embedding_file, size_t dims, const char *source_file, const char *model) {
     DEBUG_PRINT("store_precomputed: embedding_file=%s, source_file=%s", 
                 embedding_file, source_file);
 
@@ -289,7 +290,7 @@ int store_precomputed(const char *embedding_file, size_t dims, const char *sourc
     }
 
     // Store the embedding
-    eb_status_t status = cli_store_embedding_file(rel_embedding, rel_source, repo_root);
+    eb_status_t status = cli_store_embedding_file(rel_embedding, rel_source, repo_root, model);
 
     free(repo_root);
     free(rel_source);
@@ -337,7 +338,7 @@ int store_from_source(const char *source_file, int argc, char **argv)
 
         DEBUG_PRINT("store_from_source: source_file=%s\n", source_file);
 
-        if (!cli_store_embedding_file(source_file, source_file, cwd)) {
+        if (!cli_store_embedding_file(source_file, source_file, cwd, model)) {
                 goto cleanup;
         }
 
@@ -350,106 +351,160 @@ cleanup:
         return ret;
 }
 
-    static struct option long_options[] = {
-        {"model",     required_argument, 0, 'm'},
-        {"embedding", required_argument, 0, 'e'},
-        {"dims",      required_argument, 0, 'd'},
-        {"verbose",   no_argument,      0, 'v'},
-        {"quiet",     no_argument,      0, 'q'},
-        {0, 0, 0, 0}
-    };
+static struct option long_options[] = {
+    {"model",     required_argument, 0, 'm'},
+    {"embedding", required_argument, 0, 'e'},
+    {"dims",      required_argument, 0, 'd'},
+    {"verbose",   no_argument,      0, 'v'},
+    {"quiet",     no_argument,      0, 'q'},
+    {"help",      no_argument,      0, 'h'},
+    {0, 0, 0, 0}
+};
 
 int cmd_store(int argc, char *argv[])
 {
-        const char *embedding_file = NULL;
-        const char *source_file = NULL;
-        size_t dims = 0;
-        bool verbose = false;
-        int opt;
-        
-        optind = 1;
-        
-        while ((opt = getopt_long(argc, argv, "e:m:d:v", long_options, NULL)) != -1) {
+    // Add help option check at the beginning
+    if (argc < 2 || has_option(argc, argv, "-h") || has_option(argc, argv, "--help")) {
+        printf("%s", STORE_USAGE);
+        return (argc < 2) ? 1 : 0;
+    }
+
+    const char *embedding_file = NULL;
+    const char *source_file = NULL;
+    const char *model = NULL;
+    size_t dims = 0;
+    bool verbose = false;
+    int opt;
+    
+    optind = 1;
+    
+    while ((opt = getopt_long(argc, argv, "e:m:d:vh", long_options, NULL)) != -1) {
         switch (opt) {
-                case 'e':
-                        embedding_file = optarg;
-                        break;
-            case 'm':
-                        // Remove unused model variable
+            case 'e':
+                embedding_file = optarg;
                 break;
-                case 'd':
-                        dims = atoi(optarg);
-                        if (dims == 0) {
-                                fprintf(stderr, "error: Invalid dimensions\n");
-                                return 1;
-                        }
+            case 'm':
+                model = optarg;
+                DEBUG_PRINT("Model specified: %s", model);
+                break;
+            case 'd':
+                dims = atoi(optarg);
+                if (dims == 0) {
+                    fprintf(stderr, "error: Invalid dimensions\n");
+                    return 1;
+                }
                 break;
             case 'v':
-                        verbose = true;
+                verbose = true;
+                break;
+            case 'q':
+                // Quiet mode, no error messages
                 break;
             default:
-                        fprintf(stderr, "%s", STORE_USAGE);
+                fprintf(stderr, "%s", STORE_USAGE);
                 return 1;
         }
     }
 
     if (optind >= argc) {
-                fprintf(stderr, "error: No source file specified\n");
-                return 1;
-        }
-        source_file = argv[optind];
+        fprintf(stderr, "error: No source file specified\n");
+        return 1;
+    }
+    source_file = argv[optind];
 
-        if (!embedding_file) {
-                fprintf(stderr, "error: Direct embedding generation not yet supported\n");
-                fprintf(stderr, "hint: Use --embedding to store precomputed embeddings\n");
+    if (!embedding_file) {
+        fprintf(stderr, "error: Direct embedding generation not yet supported\n");
+        fprintf(stderr, "hint: Use --embedding to store precomputed embeddings\n");
         return 1;
     }
 
-        // Validate dimensions for .bin files
-        if (strstr(embedding_file, ".bin")) {
-                if (dims == 0) {
-                        fprintf(stderr, "error: --dims required for .bin files\n");
-                        return 1;
+    // Validate dimensions for .bin files
+    if (strstr(embedding_file, ".bin")) {
+        if (dims == 0) {
+            // Try to get dimensions from model if specified
+            if (model && eb_is_model_registered(model)) {
+                eb_model_info_t model_info;
+                if (eb_get_model_info(model, &model_info) == EB_SUCCESS) {
+                    dims = model_info.dimensions;
+                    DEBUG_PRINT("Using dimensions %zu from registered model %s", dims, model);
                 }
+            }
+            
+            // If still no dimensions, error out
+            if (dims == 0) {
+                fprintf(stderr, "error: --dims required for .bin files\n");
+                fprintf(stderr, "hint: Either provide --dims or use a registered model\n");
+                return 1;
+            }
         }
+    }
 
-        if (verbose) {
-                printf("→ Reading %s\n", source_file);
-                if (dims)
-                        printf("→ Using embedding with %zu dimensions\n", dims);
-        }
+    if (verbose) {
+        printf("→ Reading %s\n", source_file);
+        if (dims)
+            printf("→ Using embedding with %zu dimensions\n", dims);
+        if (model)
+            printf("→ Using model: %s\n", model);
+    }
 
-        // Find repository root first
-        char* repo_root = find_repo_root(".");
-        if (!repo_root) {
-            fprintf(stderr, "Error: Not in an eb repository\n");
-            fprintf(stderr, "hint: Run 'eb init' to create a new repository\n");
-            return 1;
-        }
-        DEBUG_PRINT("Repository root: %s", repo_root);
+    // Find repository root first
+    char* repo_root = find_repo_root(".");
+    if (!repo_root) {
+        fprintf(stderr, "Error: Not in an eb repository\n");
+        fprintf(stderr, "hint: Run 'eb init' to create a new repository\n");
+        return 1;
+    }
+    DEBUG_PRINT("Repository root: %s", repo_root);
 
-        // Get relative paths for source and embedding files
-        char* rel_source = get_relative_path(source_file, repo_root);
-        char* rel_embedding = embedding_file ? get_relative_path(embedding_file, repo_root) : NULL;
-        
-        if (!rel_source || (embedding_file && !rel_embedding)) {
-            fprintf(stderr, "Error: Files must be within repository\n");
-            free(repo_root);
-            free(rel_source);
-            free(rel_embedding);
-            return 1;
-        }
-
-        // Use relative paths for storage
-        int result;
-        if (embedding_file) {
-            result = store_precomputed(rel_embedding, dims, rel_source);
-        } else {
-            result = store_from_source(rel_source, argc, argv);
-        }
-        
+    // Get relative paths for source and embedding files
+    char* rel_source = get_relative_path(source_file, repo_root);
+    char* rel_embedding = embedding_file ? get_relative_path(embedding_file, repo_root) : NULL;
+    
+    if (!rel_source || (embedding_file && !rel_embedding)) {
+        fprintf(stderr, "Error: Files must be within repository\n");
         free(repo_root);
         free(rel_source);
         free(rel_embedding);
-        return result;
+        return 1;
+    }
+
+    // Use relative paths for storage
+    int result;
+    if (embedding_file) {
+        // If model not specified on command line, try to extract from filename
+        if (!model) {
+            // Check if embedding file has a model indicator in its name
+            // Format: filename.model.npy or filename.model.bin
+            const char* filename = strrchr(rel_embedding, '/');
+            if (!filename) filename = rel_embedding;
+            else filename++; // Skip the slash
+            
+            char* last_dot = strrchr(filename, '.');
+            if (last_dot) {
+                // Go back to previous dot
+                char* temp = strdup(filename);
+                char* temp_last_dot = strrchr(temp, '.');
+                *temp_last_dot = '\0'; // Temporarily terminate string at last dot
+                char* prev_dot = strrchr(temp, '.');
+                
+                if (prev_dot) {
+                    // Extract model name between dots
+                    model = strdup(prev_dot + 1);
+                    DEBUG_PRINT("Extracted model from filename: %s", model);
+                }
+                
+                free(temp);
+            }
+        }
+        
+        // Store with explicit model parameter
+        result = store_precomputed(rel_embedding, dims, rel_source, model);
+    } else {
+        result = store_from_source(rel_source, argc, argv);
+    }
+    
+    free(repo_root);
+    free(rel_source);
+    free(rel_embedding);
+    return result;
 } 

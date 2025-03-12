@@ -23,7 +23,33 @@ typedef enum eb_status {
     EB_ERROR_HASH_MISMATCH = -7,
     EB_ERROR_DIMENSION_MISMATCH = -8,
     EB_ERROR_COMPUTATION_FAILED = -9,
-    EB_ERROR_HASH_AMBIGUOUS = -10    // New error code for ambiguous hashes
+    EB_ERROR_HASH_AMBIGUOUS = -10,   // New error code for ambiguous hashes
+    
+    /* General errors */
+    EB_ERROR_INVALID_PARAMETER = -20,
+    EB_ERROR_MEMORY = -21,
+    EB_ERROR_IO = -22,
+    EB_ERROR_ALREADY_EXISTS = -23,
+    EB_ERROR_INVALID_NAME = -24,
+    EB_ERROR_NOT_IMPLEMENTED = -25,
+    EB_ERROR_LOCK_FAILED = -26,      // Error for lock acquisition failures
+    EB_ERROR_REFERENCED = -27,       // Error for objects that are still referenced
+    EB_ERROR_CONNECTION_FAILED = -28, // Error for connection failures
+    EB_ERROR_UNSUPPORTED = -29,      // Error for unsupported operations or protocols
+    EB_ERROR_INITIALIZATION = -30,   // Error for initialization failures
+    EB_ERROR_NOT_CONNECTED = -31,    // Error for operations requiring connection
+    EB_ERROR_AUTHENTICATION = -32,   // Error for authentication failures
+    EB_ERROR_INVALID_REPOSITORY = -33, // Error for invalid repository structure
+    EB_ERROR_CONNECTION_CLOSED = -34, // Error for closed connections
+    
+    /* Remote operation errors */
+    EB_ERROR_REMOTE_NOTFOUND = -100,
+    EB_ERROR_REMOTE_CONNECTION = -101,
+    EB_ERROR_REMOTE_AUTH = -102,
+    EB_ERROR_REMOTE_PROTOCOL = -103,
+    EB_ERROR_REMOTE_REJECTED = -104,
+    EB_ERROR_REMOTE_CONFLICT = -105,
+    EB_ERROR_REMOTE_TIMEOUT = -106
 } eb_status_t;
 
 /* Convert error code to string */

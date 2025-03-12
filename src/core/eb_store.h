@@ -13,7 +13,8 @@ eb_status_t get_current_hash(const char* root, const char* source,
 /* Store embedding file */
 eb_status_t store_embedding_file(const char* embedding_path,
                                const char* source_file,
-                               const char* base_dir);
+                               const char* base_dir,
+                               const char* provider);
 
 eb_status_t eb_store_vector_memory(eb_store_t* store,
                                  const eb_embedding_t* embedding,

@@ -83,4 +83,14 @@ char* get_absolute_path(const char* rel_path, const char* repo_root) {
         return strdup(result);
     }
     return abs_path;
+}
+
+/**
+ * Get the path to the current repository
+ * 
+ * @return Dynamically allocated string with the repository path, or NULL if not in a repository
+ * The caller is responsible for freeing the returned string.
+ */
+char* get_repository_path(void) {
+    return find_repo_root(NULL);
 } 
