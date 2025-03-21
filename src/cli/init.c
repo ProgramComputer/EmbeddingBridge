@@ -29,43 +29,31 @@ static const char* INIT_USAGE =
     "  eb init --force\n";
 
 // Default configuration
-static const char* DEFAULT_CONFIG = "{\n"
-    "  \"version\": \"0.1.0\",\n"
-    "  \"default_model\": \"\",\n"
-    "  \"storage\": {\n"
-    "    \"compression\": true,\n"
-    "    \"deduplication\": true\n"
-    "  },\n"
-    "  \"git\": {\n"
-    "    \"auto_update\": true,\n"
-    "    \"hooks\": {\n"
-    "      \"pre-commit\": {\n"
-    "        \"enabled\": true,\n"
-    "        \"verbose\": false\n"
-    "      },\n"
-    "      \"post-commit\": {\n"
-    "        \"enabled\": true,\n"
-    "        \"verbose\": false\n"
-    "      },\n"
-    "      \"pre-push\": {\n"
-    "        \"enabled\": true,\n"
-    "        \"verbose\": false\n"
-    "      },\n"
-    "      \"post-merge\": {\n"
-    "        \"enabled\": true,\n"
-    "        \"verbose\": false\n"
-    "      }\n"
-    "    }\n"
-    "  },\n"
-    "  \"models\": {\n"
-    "  }\n"
-    "}\n";
+static const char* DEFAULT_CONFIG = "# EmbeddingBridge config file\n\n"
+    "[core]\n"
+    "	version = 0.1.0\n\n"
+    "[model]\n"
+    "	default = \n\n"
+    "[storage]\n"
+    "	compression = true\n"
+    "	deduplication = true\n\n"
+    "[git]\n"
+    "	auto_update = true\n\n"
+    "[git \"hooks.pre-commit\"]\n"
+    "	enabled = true\n"
+    "	verbose = false\n\n"
+    "[git \"hooks.post-commit\"]\n"
+    "	enabled = true\n"
+    "	verbose = false\n\n"
+    "[git \"hooks.pre-push\"]\n"
+    "	enabled = true\n"
+    "	verbose = false\n\n"
+    "[git \"hooks.post-merge\"]\n"
+    "	enabled = true\n"
+    "	verbose = false\n";
 
 // Default HEAD reference
-static const char* DEFAULT_HEAD = "{\n"
-    "  \"current\": null,\n"
-    "  \"models\": {}\n"
-    "}\n";
+static const char* DEFAULT_HEAD = "main";
 
 // Hook templates with more transparency
 static const struct {
@@ -247,7 +235,7 @@ static eb_status_t create_eb_structure(const char* root, const char* model __att
     }
     
     // Create config file
-    snprintf(path, sizeof(path), "%s/.eb/config.json", root);
+    snprintf(path, sizeof(path), "%s/.eb/config", root);
     if (write_file(path, DEFAULT_CONFIG) != 0) {
         fprintf(stderr, "error: could not create config file\n");
         return 1;

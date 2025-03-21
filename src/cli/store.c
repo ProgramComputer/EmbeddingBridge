@@ -39,18 +39,25 @@
 eb_status_t eb_git_get_metadata(const char* file_path, eb_git_metadata_t** meta);
 
 static const char* STORE_USAGE = 
-    "Usage: eb store [options] <file>...\n"
+    "Usage: eb store [options] <embedding> <file>\n"
     "\n"
     "Store embeddings for documents\n"
     "\n"
     "Options:\n"
-    "  -e, --embedding <file> Use precomputed embedding file (.bin or .npy)\n"
     "  -d, --dims <dims>     Dimensions for .bin files (required)\n"
+    "  -m, --model <name>    Model name to record with embedding\n" 
     "  -v, --verbose         Show detailed output\n"
+    "  -q, --quiet           Suppress warning messages\n"
+    "  -h, --help            Show this help message\n"
+    "\n"
+    "Arguments:\n"
+    "  <embedding>           Precomputed embedding file (.bin or .npy)\n"
+    "  <file>                Original document file\n"
     "\n"
     "Examples:\n"
-    "  eb store --embedding vector.bin --dims 1536 doc.txt  # Store binary embedding\n"
-    "  eb store --embedding vector.npy doc.txt              # Store numpy embedding\n";
+    "  eb store vector.bin -d 1536 doc.txt    # Store binary embedding\n"
+    "  eb store vector.npy doc.txt            # Store numpy embedding\n"
+    "  eb store -m openai-3 vector.npy doc.txt  # Specify model name\n";
 
 static bool validate_file(const char* file_path, bool quiet) {
     struct stat st;
@@ -351,15 +358,49 @@ cleanup:
         return ret;
 }
 
-static struct option long_options[] = {
-    {"model",     required_argument, 0, 'm'},
-    {"embedding", required_argument, 0, 'e'},
-    {"dims",      required_argument, 0, 'd'},
-    {"verbose",   no_argument,      0, 'v'},
-    {"quiet",     no_argument,      0, 'q'},
-    {"help",      no_argument,      0, 'h'},
-    {0, 0, 0, 0}
-};
+// Define a context structure to hold parsing results
+typedef struct {
+    const char *embedding_file;
+    const char *source_file;
+    const char *model;
+    size_t dims;
+    bool verbose;
+    bool quiet;
+} store_context_t;
+
+// Callback for option processing
+static int store_option_callback(char short_opt, const char* long_opt, const char* arg, void* ctx) {
+    store_context_t* context = (store_context_t*)ctx;
+    
+    switch(short_opt) {
+        case 'm':
+            context->model = arg;
+            DEBUG_PRINT("Model specified: %s", arg);
+            break;
+        case 'd':
+            context->dims = atoi(arg);
+            if (context->dims == 0) {
+                fprintf(stderr, "error: Invalid dimensions\n");
+                return 1;
+            }
+            break;
+        case 'v':
+            context->verbose = true;
+            break;
+        case 'q':
+            context->quiet = true;
+            break;
+        default:
+            // Unknown option
+            if (long_opt)
+                fprintf(stderr, "Unknown option: %s\n", long_opt);
+            else
+                fprintf(stderr, "Unknown option: -%c\n", short_opt);
+            return 1;
+    }
+    
+    return 0;
+}
 
 int cmd_store(int argc, char *argv[])
 {
@@ -369,99 +410,118 @@ int cmd_store(int argc, char *argv[])
         return (argc < 2) ? 1 : 0;
     }
 
-    const char *embedding_file = NULL;
-    const char *source_file = NULL;
-    const char *model = NULL;
-    size_t dims = 0;
-    bool verbose = false;
-    int opt;
+    // Define context for option parsing
+    store_context_t context = {
+        .embedding_file = NULL,
+        .source_file = NULL,
+        .model = NULL,
+        .dims = 0,
+        .verbose = false,
+        .quiet = false
+    };
     
-    optind = 1;
+    // Define option definitions
+    const char* short_opts = "m:d:vqh";
+    const char* long_opts[] = {
+        "--model",
+        "--dims",
+        "--verbose",
+        "--quiet",
+        "--help",
+        NULL  // Must be NULL-terminated
+    };
     
-    while ((opt = getopt_long(argc, argv, "e:m:d:vh", long_options, NULL)) != -1) {
-        switch (opt) {
-            case 'e':
-                embedding_file = optarg;
-                break;
-            case 'm':
-                model = optarg;
-                DEBUG_PRINT("Model specified: %s", model);
-                break;
-            case 'd':
-                dims = atoi(optarg);
-                if (dims == 0) {
-                    fprintf(stderr, "error: Invalid dimensions\n");
-                    return 1;
-                }
-                break;
-            case 'v':
-                verbose = true;
-                break;
-            case 'q':
-                // Quiet mode, no error messages
-                break;
-            default:
-                fprintf(stderr, "%s", STORE_USAGE);
-                return 1;
-        }
+    // Array to collect positional arguments
+    char* positional[argc];
+    int pos_count = 0;
+    
+    // Parse options using Git-style parser
+    int result = parse_git_style_options(
+        argc, argv, 
+        short_opts, long_opts,
+        store_option_callback, &context,
+        positional, &pos_count
+    );
+    
+    if (result != 0) {
+        return result;
     }
-
-    if (optind >= argc) {
+    
+    // Process positional arguments
+    if (pos_count >= 1) {
+        context.embedding_file = positional[0];
+        DEBUG_PRINT("Embedding file specified as positional argument: %s", context.embedding_file);
+    }
+    
+    if (pos_count >= 2) {
+        context.source_file = positional[1];
+        DEBUG_PRINT("Source file specified as positional argument: %s", context.source_file);
+    }
+    
+    // Additional validation
+    if (!context.source_file) {
         fprintf(stderr, "error: No source file specified\n");
         return 1;
     }
-    source_file = argv[optind];
-
-    if (!embedding_file) {
-        fprintf(stderr, "error: Direct embedding generation not yet supported\n");
-        fprintf(stderr, "hint: Use --embedding to store precomputed embeddings\n");
+    
+    if (!context.embedding_file) {
+        if (!context.quiet) {
+            fprintf(stderr, "error: Direct embedding generation not yet supported\n");
+            fprintf(stderr, "hint: Specify an embedding file as first positional argument\n");
+        }
         return 1;
     }
 
     // Validate dimensions for .bin files
-    if (strstr(embedding_file, ".bin")) {
-        if (dims == 0) {
+    if (strstr(context.embedding_file, ".bin")) {
+        if (context.dims == 0) {
             // Try to get dimensions from model if specified
-            if (model && eb_is_model_registered(model)) {
+            if (context.model && eb_is_model_registered(context.model)) {
                 eb_model_info_t model_info;
-                if (eb_get_model_info(model, &model_info) == EB_SUCCESS) {
-                    dims = model_info.dimensions;
-                    DEBUG_PRINT("Using dimensions %zu from registered model %s", dims, model);
+                if (eb_get_model_info(context.model, &model_info) == EB_SUCCESS) {
+                    context.dims = model_info.dimensions;
+                    DEBUG_PRINT("Using dimensions %zu from registered model %s", context.dims, context.model);
                 }
             }
             
             // If still no dimensions, error out
-            if (dims == 0) {
-                fprintf(stderr, "error: --dims required for .bin files\n");
-                fprintf(stderr, "hint: Either provide --dims or use a registered model\n");
+            if (context.dims == 0) {
+                if (!context.quiet) {
+                    fprintf(stderr, "error: --dims required for .bin files\n");
+                    fprintf(stderr, "hint: Either provide --dims or use a registered model\n");
+                }
                 return 1;
             }
         }
     }
 
-    if (verbose) {
-        printf("→ Reading %s\n", source_file);
-        if (dims)
-            printf("→ Using embedding with %zu dimensions\n", dims);
-        if (model)
-            printf("→ Using model: %s\n", model);
+    if (context.verbose) {
+        printf("→ Reading %s\n", context.source_file);
+        if (context.dims)
+            printf("→ Using embedding with %zu dimensions\n", context.dims);
+        if (context.model)
+            printf("→ Using model: %s\n", context.model);
     }
 
     // Find repository root first
     char* repo_root = find_repo_root(".");
     if (!repo_root) {
-        fprintf(stderr, "Error: Not in an eb repository\n");
-        fprintf(stderr, "hint: Run 'eb init' to create a new repository\n");
+        if (!context.quiet) {
+            fprintf(stderr, "Error: Not in an eb repository\n");
+            fprintf(stderr, "hint: Run 'eb init' to create a new repository\n");
+        }
         return 1;
     }
     DEBUG_PRINT("Repository root: %s", repo_root);
 
     // Get relative paths for source and embedding files
-    char* rel_source = get_relative_path(source_file, repo_root);
-    char* rel_embedding = embedding_file ? get_relative_path(embedding_file, repo_root) : NULL;
+    char* rel_source = get_relative_path(context.source_file, repo_root);
+    char* rel_embedding = context.embedding_file ? get_relative_path(context.embedding_file, repo_root) : NULL;
     
-    if (!rel_source || (embedding_file && !rel_embedding)) {
-        fprintf(stderr, "Error: Files must be within repository\n");
+    if (!rel_source || (context.embedding_file && !rel_embedding)) {
+        if (!context.quiet) {
+            fprintf(stderr, "Error: Files must be within repository\n");
+        }
         free(repo_root);
         free(rel_source);
         free(rel_embedding);
@@ -469,10 +529,10 @@ int cmd_store(int argc, char *argv[])
     }
 
     // Use relative paths for storage
-    int result;
-    if (embedding_file) {
+    int process_result;
+    if (context.embedding_file) {
         // If model not specified on command line, try to extract from filename
-        if (!model) {
+        if (!context.model) {
             // Check if embedding file has a model indicator in its name
             // Format: filename.model.npy or filename.model.bin
             const char* filename = strrchr(rel_embedding, '/');
@@ -489,8 +549,8 @@ int cmd_store(int argc, char *argv[])
                 
                 if (prev_dot) {
                     // Extract model name between dots
-                    model = strdup(prev_dot + 1);
-                    DEBUG_PRINT("Extracted model from filename: %s", model);
+                    context.model = strdup(prev_dot + 1);
+                    DEBUG_PRINT("Extracted model from filename: %s", context.model);
                 }
                 
                 free(temp);
@@ -498,13 +558,13 @@ int cmd_store(int argc, char *argv[])
         }
         
         // Store with explicit model parameter
-        result = store_precomputed(rel_embedding, dims, rel_source, model);
+        process_result = store_precomputed(rel_embedding, context.dims, rel_source, context.model);
     } else {
-        result = store_from_source(rel_source, argc, argv);
+        process_result = store_from_source(rel_source, argc, argv);
     }
     
     free(repo_root);
     free(rel_source);
     free(rel_embedding);
-    return result;
+    return process_result;
 } 

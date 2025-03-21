@@ -70,8 +70,7 @@ void cli_info(const char* fmt, ...) {
 
 bool is_option_with_value(const char* arg) {
     return (strcmp(arg, "-m") == 0 || strcmp(arg, "--model") == 0 ||
-            strcmp(arg, "-t") == 0 || strcmp(arg, "--threshold") == 0 ||
-            strcmp(arg, "-k") == 0 || strcmp(arg, "--neighbors") == 0);
+            strcmp(arg, "-t") == 0 || strcmp(arg, "--threshold") == 0);
 }
 
 float get_float_option(int argc, char** argv, const char* short_opt, const char* long_opt, float default_value) {
@@ -116,7 +115,7 @@ const char* get_model(int argc, char** argv) {
         return NULL;
     }
     
-    snprintf(config_path, sizeof(config_path), "%s/.eb/config.json", cwd);
+    snprintf(config_path, sizeof(config_path), "%s/.eb/config", cwd);
     
     FILE* f = fopen(config_path, "r");
     if (!f) {

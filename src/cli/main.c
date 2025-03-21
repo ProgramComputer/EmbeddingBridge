@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "../core/debug.h"
 #include "cli.h"
 #include "set.h"
 #include "merge.h"
@@ -15,7 +16,6 @@ static const char* USAGE =
     "  init          Create empty embedding repository\n"
     "  store         Store embeddings for documents\n"
     "  diff          Compare embeddings between versions\n"
-    "  query         Search across embeddings\n"
     "  status        Show embedding status for a source file\n"
     "  log           Display embedding log for files\n"
     "  set           Manage embedding sets\n"
@@ -29,6 +29,8 @@ static const char* USAGE =
     "  model         Manage embedding models\n"
     "  rollback      Revert to a previous embedding version\n"
     "  gc            Garbage collect unreferenced embeddings\n"
+    "  get           Download a file or directory from a repository\n"
+    "  rm            Remove embeddings from tracking\n"
     "\n"
     "Run 'eb <command> --help' for command-specific help\n";
 
@@ -37,7 +39,6 @@ static const eb_command_t commands[] = {
     {"init", "Create empty embedding repository", cmd_init},
     {"store", "Store embeddings for documents", cmd_store},
     {"diff", "Compare embeddings between versions", cmd_diff},
-    {"query", "Search across embeddings", cmd_query},
     {"status", "Show embedding status for a source file", cmd_status},
     {"log", "Display embedding log for files", cmd_log},
     {"set", "Manage embedding sets", cmd_set},
@@ -48,10 +49,11 @@ static const eb_command_t commands[] = {
     {"config", "Configure embedding settings", cmd_config},
     {"remote", "Manage embedding storage locations", cmd_remote},
     {"hooks", "Manage Git hooks", cmd_hooks},
-    
     {"model", "Manage embedding models", cmd_model},
     {"rollback", "Revert to a previous embedding version", cmd_rollback},
     {"gc", "Garbage collect unreferenced embeddings", cmd_gc},
+    {"get", "Download a file or directory from a repository", cmd_get},
+    {"rm", "Remove embeddings from tracking", cmd_rm},
     
     {NULL, NULL, NULL}
 };
@@ -76,10 +78,13 @@ static void suggest_command(const char* cmd) {
 }
 
 int main(int argc, char** argv) {
+    /* Initialize debug system */
+    eb_debug_init();
+    
     if (getenv("EB_DEBUG")) {
-        fprintf(stderr, "Debug - Main called with:\n");
+        DEBUG_INFO("Main called with %d arguments", argc);
         for (int i = 0; i < argc; i++) {
-            fprintf(stderr, "  argv[%d]: %s\n", i, argv[i]);
+            DEBUG_INFO("  argv[%d]: %s", i, argv[i]);
         }
     }
 
@@ -107,7 +112,7 @@ int main(int argc, char** argv) {
     for (const eb_command_t* cmd = commands; cmd->name; cmd++) {
         if (strcmp(cmd_name, cmd->name) == 0) {
             if (getenv("EB_DEBUG")) {
-                fprintf(stderr, "Debug - Found command: %s\n", cmd_name);
+                DEBUG_INFO("Found command: %s", cmd_name);
             }
             return cmd->handler(argc - 1, argv + 1);
         }

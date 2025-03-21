@@ -810,15 +810,84 @@ int cmd_rollback(int argc, char** argv) {
         if (status == EB_SUCCESS) {
             DEBUG_PRINT("cmd_rollback: update_index_entry succeeded\n");
             
-        /* Update the HEAD file too to ensure consistency */
-        eb_status_t head_status = update_head_file(repo_root, abs_source_path, full_hash, model);
-        if (head_status != EB_SUCCESS) {
-            DEBUG_PRINT("Warning: Failed to update HEAD file, status=%d\n", head_status);
-            /* Continue anyway since index was updated */
-            } else {
-                DEBUG_PRINT("cmd_rollback: update_head_file succeeded\n");
-                printf("Successfully rolled back %s to version %s\n", source, full_hash);
+            /* Update the model ref file to ensure consistency */
+            if (model) {
+                char model_ref_path[PATH_MAX];
+                snprintf(model_ref_path, sizeof(model_ref_path), "%s/.eb/refs/models/%s", repo_root, model);
+                
+                DEBUG_PRINT("cmd_rollback: Updating model ref file: %s\n", model_ref_path);
+                
+                // Get relative source path for model ref file
+                char rel_source_path[PATH_MAX] = {0};
+                size_t repo_root_len = strlen(repo_root);
+                if (strncmp(abs_source_path, repo_root, repo_root_len) == 0) {
+                    const char* rel_src = abs_source_path + repo_root_len;
+                    if (rel_src[0] == '/') {
+                        rel_src++; // Skip leading slash
+                    }
+                    strncpy(rel_source_path, rel_src, sizeof(rel_source_path) - 1);
+                } else {
+                    strncpy(rel_source_path, abs_source_path, sizeof(rel_source_path) - 1);
+                }
+                
+                // Read existing model references first
+                FILE* model_read_fp = fopen(model_ref_path, "r");
+                char** existing_lines = NULL;
+                size_t line_count = 0;
+                
+                if (model_read_fp) {
+                    char line[PATH_MAX + 65]; // Hash (64) + space + path + null terminator
+                    while (fgets(line, sizeof(line), model_read_fp)) {
+                        // Skip lines with same source file - comparing to relative path
+                        char file_path[PATH_MAX];
+                        char file_hash[65];
+                        
+                        // Remove newline if present
+                        line[strcspn(line, "\n")] = 0;
+                        
+                        if (sscanf(line, "%s %s", file_hash, file_path) == 2) {
+                            // Need to check if relative path == rel_source_path
+                            if (strcmp(file_path, rel_source_path) != 0) {
+                                // Keep lines that don't match this source file
+                                existing_lines = realloc(existing_lines, (line_count + 1) * sizeof(char*));
+                                if (existing_lines)
+                                    existing_lines[line_count++] = strdup(line);
+                            }
+                        }
+                    }
+                    fclose(model_read_fp);
+                }
+                
+                // Write updated model reference file
+                FILE* model_fp = fopen(model_ref_path, "w");
+                if (!model_fp) {
+                    DEBUG_PRINT("cmd_rollback: Warning: Failed to create model reference file for %s\n", model);
+                    fprintf(stderr, "Warning: Failed to update model reference file\n");
+                    
+                    // Free allocated memory for existing lines
+                    for (size_t i = 0; i < line_count; i++) {
+                        free(existing_lines[i]);
+                    }
+                    free(existing_lines);
+                    
+                    /* Continue anyway since index was updated */
+                } else {
+                    // Write back existing lines first
+                    for (size_t i = 0; i < line_count; i++) {
+                        fprintf(model_fp, "%s\n", existing_lines[i]);
+                        free(existing_lines[i]);
+                    }
+                    free(existing_lines);
+                    
+                    // Add the new file entry with relative path
+                    fprintf(model_fp, "%s %s\n", full_hash, rel_source_path);
+                    
+                    fclose(model_fp);
+                    DEBUG_PRINT("cmd_rollback: Successfully updated model ref file for %s\n", model);
+                }
             }
+            
+            printf("Successfully rolled back %s to version %s\n", source, full_hash);
             return 0;
         } else {
             fprintf(stderr, "Error: Failed to update index, status=%d\n", status);

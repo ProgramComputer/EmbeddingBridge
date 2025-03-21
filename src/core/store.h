@@ -144,7 +144,8 @@ eb_status_t eb_get_vector_memory(
 /* Store metadata object */
 eb_status_t store_embedding_file(const char* embedding_path,
                                 const char* source_file,
-                                const char* base_dir);
+                                const char* base_dir,
+                                const char* provider);
 
 eb_status_t get_version_history(const char* root, const char* source, 
                               eb_stored_vector_t** out_versions, size_t* out_count); 

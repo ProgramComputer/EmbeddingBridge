@@ -24,7 +24,8 @@
 #include <dirent.h>
 #include "types.h"
 #include "debug.h"
-#include "eb_store.h"
+#include "store.h"
+#include "compress.h"
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -47,7 +48,25 @@ static eb_status_t apply_binary_delta(const char* base_path, const char* delta_p
 
 /* Function implementations */
 static void hash_data(const float* values, size_t size, uint8_t* hash) {
-    hash_bytes((const unsigned char*)values, size * sizeof(float), hash);
+    // Convert float values to double (float64) for consistent hashing
+    double* double_values = malloc(size * sizeof(double));
+    if (!double_values) {
+        DEBUG_PRINT("Failed to allocate memory for double conversion\n");
+        // Fallback to float32 if memory allocation fails
+        hash_bytes((const unsigned char*)values, size * sizeof(float), hash);
+        return;
+    }
+    
+    // Convert float32 to float64
+    for (size_t i = 0; i < size; i++) {
+        double_values[i] = (double)values[i];
+    }
+    
+    // Hash the float64 values
+    hash_bytes((const unsigned char*)double_values, size * sizeof(double), hash);
+    
+    // Clean up
+    free(double_values);
 }
 
 static void hash_bytes(const unsigned char* data, size_t size, uint8_t* hash) {
@@ -101,12 +120,15 @@ static char* hash_to_hex(const uint8_t hash[32], char out[65]) {
 }
 
 static char* create_object_path(const char* root, const char* hex_hash) {
-    // Format: <root>/objects/xx/xxxxxx...
-    size_t len = strlen(root) + 64;
+    // Format: <root>/objects/xxxxxxxxxxxx.raw
+    size_t len = strlen(root) + 64 + 20;  // Extra space for path components and extension
     char* path = malloc(len);
     if (!path) return NULL;
     
-    snprintf(path, len, "%s/objects/%.2s/%s", root, hex_hash, hex_hash + 2);
+    DEBUG_PRINT("create_object_path: root=%s, hex_hash=%s", root, hex_hash);
+    snprintf(path, len, "%s/.eb/objects/%s.raw", root, hex_hash);
+    DEBUG_PRINT("create_object_path: CREATED PATH=%s", path);
+    
     return path;
 }
 
@@ -279,47 +301,108 @@ static eb_status_t write_object(
         return EB_SUCCESS;  // Object already exists
     }
     
+    // Compress the data with ZSTD level 9
+    void* compressed_data = NULL;
+    size_t compressed_size = 0;
+    eb_status_t compress_result = EB_SUCCESS;
+    
+    if (obj_type == EB_OBJ_VECTOR) {
+        // Only compress vector data, not metadata
+        compress_result = eb_compress_zstd(data, size, &compressed_data, &compressed_size, 9);
+        
+        if (compress_result != EB_SUCCESS) {
+            DEBUG_ERROR("Failed to compress vector data: %d", compress_result);
+            free(obj_path);
+            return compress_result;
+        }
+        
+        DEBUG_INFO("Compressed vector data from %zu to %zu bytes (ratio: %.2f%%)",
+                 size, compressed_size, (double)compressed_size * 100.0 / (double)size);
+        
+        // Set the compressed flag
+        flags |= EB_FLAG_COMPRESSED;
+    } else {
+        // For non-vector data, just use as-is
+        compressed_data = (void*)data;
+        compressed_size = size;
+    }
+    
     // Create object header
     eb_object_header_t header = {
         .magic = EB_VECTOR_MAGIC,
         .version = EB_VERSION,
         .obj_type = obj_type,
         .flags = flags,
-        .size = size
+        .size = size  // Store original size for decompression
     };
     memcpy(header.hash, hash, 32);
     
     // Write to temporary file
     FILE* fp = fopen(temp_path, "wb");
     if (!fp) {
+        if (obj_type == EB_OBJ_VECTOR) free(compressed_data);
         free(obj_path);
         return EB_ERROR_FILE_IO;
     }
     
-    // Write header and data
+    // Write header and compressed data
     if (fwrite(&header, sizeof(header), 1, fp) != 1 ||
-        fwrite(data, size, 1, fp) != 1) {
+        fwrite(compressed_data, compressed_size, 1, fp) != 1) {
         fclose(fp);
         unlink(temp_path);
+        if (obj_type == EB_OBJ_VECTOR) free(compressed_data);
         free(obj_path);
         return EB_ERROR_FILE_IO;
     }
     
     fclose(fp);
     
+    // Free compressed data if we allocated it
+    if (obj_type == EB_OBJ_VECTOR) free(compressed_data);
+    
     // Create directory if needed
     char dir_path[4096];
-    snprintf(dir_path, sizeof(dir_path), "%s/.eb/objects/%.2s",
-             store->storage_path, out_hash);
+    snprintf(dir_path, sizeof(dir_path), "%s/.eb/objects",
+             store->storage_path);
              
     #ifdef _WIN32
     _mkdir(dir_path);
     #else
+    // Ensure the parent directory exists
     mkdir(dir_path, 0755);
     #endif
     
     // Move to final location (atomic operation)
+    DEBUG_PRINT("write_object: Attempting to rename '%s' to '%s'", temp_path, obj_path);
+    
     if (rename(temp_path, obj_path) != 0) {
+        DEBUG_ERROR("write_object: rename failed with errno=%d: %s", errno, strerror(errno));
+        
+        /* Additional diagnostics */
+        DEBUG_PRINT("write_object: Checking if source exists");
+        struct stat st_src;
+        if (stat(temp_path, &st_src) == 0) {
+            DEBUG_PRINT("write_object: Source file exists");
+        } else {
+            DEBUG_PRINT("write_object: Source file does not exist, errno=%d: %s", 
+                      errno, strerror(errno));
+        }
+        
+        DEBUG_PRINT("write_object: Checking destination parent directory");
+        char parent_dir[4096];
+        char *last_slash = strrchr(obj_path, '/');
+        if (last_slash) {
+            strncpy(parent_dir, obj_path, last_slash - obj_path);
+            parent_dir[last_slash - obj_path] = '\0';
+            
+            struct stat st_dir;
+            if (stat(parent_dir, &st_dir) == 0) {
+                DEBUG_PRINT("write_object: Parent directory exists: %s", parent_dir);
+            } else {
+                DEBUG_PRINT("write_object: Parent directory does not exist: %s", parent_dir);
+            }
+        }
+        
         unlink(temp_path);
         free(obj_path);
         return EB_ERROR_FILE_IO;
@@ -518,9 +601,22 @@ eb_status_t read_object(
     if (!obj_path) return EB_ERROR_MEMORY_ALLOCATION;
     
     FILE* fp = fopen(obj_path, "rb");
+    
+    // If opening with .raw extension fails, try without extension (for backwards compatibility)
     if (!fp) {
+        // Create legacy path without .raw extension
         free(obj_path);
-        return EB_ERROR_NOT_FOUND;
+        size_t len = strlen(store->storage_path) + 64 + 20;
+        obj_path = malloc(len);
+        if (!obj_path) return EB_ERROR_MEMORY_ALLOCATION;
+        
+        snprintf(obj_path, len, "%s/.eb/objects/%s", store->storage_path, hash);
+        fp = fopen(obj_path, "rb");
+        
+        if (!fp) {
+            free(obj_path);
+            return EB_ERROR_NOT_FOUND;
+        }
     }
     
     // Read and validate header
@@ -538,16 +634,28 @@ eb_status_t read_object(
         return EB_ERROR_INVALID_INPUT;
     }
     
-    // Allocate and read data
-    void* data = malloc(header.size);
-    if (!data) {
+    // Determine how much to read - we need to find the file size for compressed data
+    size_t file_size = 0;
+    size_t data_size = 0;
+    
+    // Get the file size
+    fseek(fp, 0, SEEK_END);
+    file_size = ftell(fp);
+    fseek(fp, sizeof(header), SEEK_SET);
+    
+    // Calculate the compressed data size (file size minus header size)
+    data_size = file_size - sizeof(header);
+    
+    // Allocate and read the (possibly compressed) data
+    void* raw_data = malloc(data_size);
+    if (!raw_data) {
         fclose(fp);
         free(obj_path);
         return EB_ERROR_MEMORY_ALLOCATION;
     }
     
-    if (fread(data, header.size, 1, fp) != 1) {
-        free(data);
+    if (fread(raw_data, data_size, 1, fp) != 1) {
+        free(raw_data);
         fclose(fp);
         free(obj_path);
         return EB_ERROR_FILE_IO;
@@ -556,16 +664,64 @@ eb_status_t read_object(
     fclose(fp);
     free(obj_path);
     
-    // Verify hash
-    uint8_t computed_hash[32];
-    hash_data((const float*)data, header.size, computed_hash);
-    if (memcmp(computed_hash, header.hash, 32) != 0) {
-        free(data);
-        return (eb_status_t)EB_ERROR_HASH_MISMATCH;  // Explicit cast to silence warning
+    // Check if the data is compressed (for backward compatibility)
+    void* final_data = NULL;
+    size_t final_size = 0;
+    eb_status_t status = EB_SUCCESS;
+    
+    if (header.flags & EB_FLAG_COMPRESSED) {
+        DEBUG_INFO("Decompressing object with ZSTD (original size: %zu, compressed size: %zu)", 
+                 header.size, data_size);
+        
+        // Decompress the data
+        status = eb_decompress_zstd(raw_data, data_size, &final_data, &final_size);
+        free(raw_data); // free the compressed data
+        
+        if (status != EB_SUCCESS) {
+            DEBUG_ERROR("Failed to decompress data: %d", status);
+            return status;
+        }
+        
+        // Verify that we got the expected size
+        if (final_size != header.size) {
+            DEBUG_ERROR("Decompressed size mismatch: expected %zu, got %zu", 
+                      header.size, final_size);
+            free(final_data);
+            return EB_ERROR_INVALID_FORMAT;
+        }
+        
+        // Debug the decompressed data
+        if (final_size >= 16) {
+            DEBUG_INFO("First 16 bytes of decompressed data:");
+            char debug_buf[100];
+            for (int i = 0; i < 16; i++) {
+                sprintf(debug_buf + (i*3), "%02x ", ((unsigned char*)final_data)[i]);
+            }
+            DEBUG_INFO("%s", debug_buf);
+            
+            // Check if it might be a binary embedding with dimension header
+            uint32_t possible_dims;
+            memcpy(&possible_dims, final_data, sizeof(uint32_t));
+            DEBUG_INFO("First 4 bytes as uint32: %u (0x%08x)", possible_dims, possible_dims);
+        }
+    } else {
+        // Data is not compressed, just use raw_data
+        final_data = raw_data;
+        final_size = data_size;
     }
     
-    *out_data = data;
-    *out_size = header.size;
+    // Verify hash for vector objects
+    if (header.obj_type == EB_OBJ_VECTOR) {
+        uint8_t computed_hash[32];
+        hash_data((const float*)final_data, final_size, computed_hash);
+        if (memcmp(computed_hash, header.hash, 32) != 0) {
+            free(final_data);
+            return EB_ERROR_HASH_MISMATCH;
+        }
+    }
+    
+    *out_data = final_data;
+    *out_size = final_size;
     *out_header = header;
     
     return EB_SUCCESS;
@@ -1823,39 +1979,33 @@ eb_status_t store_embedding_file(const char* embedding_path, const char* source_
         return EB_ERROR_FILE_IO;
     }
 
-    // Calculate hash of file content
-    unsigned char hash[32];
-    SHA256_CTX sha256;
-    SHA256_Init(&sha256);
-    SHA256_Update(&sha256, file_content, file_size);
-    SHA256_Final(hash, &sha256);
+    // Initialize a temporary store for writing the object
+    eb_store_t temp_store = {
+        .storage_path = (char*)base_dir,
+        .vectors = NULL,
+        .vector_count = 0
+    };
 
+    // Write the object with compression
     char hash_str[65];
-    for (int i = 0; i < 32; i++) {
-        sprintf(&hash_str[i * 2], "%02x", hash[i]);
-    }
-    hash_str[64] = '\0';
+    eb_status_t status = write_object(
+        &temp_store,
+        file_content,
+        file_size,
+        EB_OBJ_VECTOR,  // Mark as vector data for compression
+        0,  // No special flags
+        hash_str
+    );
 
-    // Store raw file
-    char raw_path[PATH_MAX];
-    snprintf(raw_path, sizeof(raw_path), "%s/%s.raw", objects_dir, hash_str);
-    fp = fopen(raw_path, "wb");
-    if (!fp) {
-        free(file_content);
-        return EB_ERROR_FILE_IO;
-    }
-
-    if (fwrite(file_content, 1, file_size, fp) != (size_t)file_size) {
-        fclose(fp);
-        free(file_content);
-        return EB_ERROR_FILE_IO;
-    }
-
-    fclose(fp);
     free(file_content);
+
+    if (status != EB_SUCCESS) {
+        return status;
+    }
 
     // Store metadata
     char meta_path[PATH_MAX];
+    // Use the same hash but with .meta extension instead of .raw
     snprintf(meta_path, sizeof(meta_path), "%s/%s.meta", objects_dir, hash_str);
     fp = fopen(meta_path, "w");
     if (!fp) {
@@ -1941,65 +2091,122 @@ eb_status_t store_embedding_file(const char* embedding_path, const char* source_
     }
 
     // Update history
-    eb_status_t status = append_to_history(base_dir, source_file, hash_str, provider);
-    if (status != EB_SUCCESS) {
+    eb_status_t history_status = append_to_history(base_dir, source_file, hash_str, provider);
+    if (history_status != EB_SUCCESS) {
         fprintf(stderr, "Warning: Failed to update history\n");
     }
 
-    // Update HEAD file to set this embedding as active for the model
+    // Create refs/models directory if it doesn't exist
+    char refs_dir[PATH_MAX];
+    snprintf(refs_dir, sizeof(refs_dir), "%s/.eb/refs", base_dir);
+    if (mkdir_p(refs_dir) != 0) {
+        fprintf(stderr, "Warning: Failed to create refs directory\n");
+    }
+    
+    char models_dir[PATH_MAX];
+    snprintf(models_dir, sizeof(models_dir), "%s/.eb/refs/models", base_dir);
+    if (mkdir_p(models_dir) != 0) {
+        fprintf(stderr, "Warning: Failed to create models directory\n");
+    }
+    
+    // Update model reference file
+    if (provider) {
+        char model_ref_path[PATH_MAX];
+        snprintf(model_ref_path, sizeof(model_ref_path), "%s/.eb/refs/models/%s", base_dir, provider);
+        
+        // Read existing model references first
+        FILE* model_read_fp = fopen(model_ref_path, "r");
+        char** existing_lines = NULL;
+        size_t line_count = 0;
+        
+        if (model_read_fp) {
+            char line[PATH_MAX + 65]; // Hash (64) + space + path + null terminator
+            while (fgets(line, sizeof(line), model_read_fp)) {
+                // Skip lines with same source file
+                char file_path[PATH_MAX];
+                char file_hash[65];
+                
+                // Remove newline if present
+                line[strcspn(line, "\n")] = 0;
+                
+                if (sscanf(line, "%s %s", file_hash, file_path) == 2) {
+                    if (strcmp(file_path, source_file) != 0) {
+                        // Keep lines that don't match this source file
+                        existing_lines = realloc(existing_lines, (line_count + 1) * sizeof(char*));
+                        if (existing_lines)
+                            existing_lines[line_count++] = strdup(line);
+                    }
+                }
+            }
+            fclose(model_read_fp);
+        }
+        
+        // Write updated model reference file
+        FILE* model_fp = fopen(model_ref_path, "w");
+        if (!model_fp) {
+            fprintf(stderr, "Warning: Failed to create model reference file for %s\n", provider);
+            
+            // Free allocated memory for existing lines
+            for (size_t i = 0; i < line_count; i++) {
+                free(existing_lines[i]);
+            }
+            free(existing_lines);
+        } else {
+            // Write back existing lines first
+            for (size_t i = 0; i < line_count; i++) {
+                fprintf(model_fp, "%s\n", existing_lines[i]);
+                free(existing_lines[i]);
+            }
+            free(existing_lines);
+            
+            // Add the new file entry
+            fprintf(model_fp, "%s %s\n", hash_str, source_file);
+            fclose(model_fp);
+        }
+    }
+
+    // Update HEAD file to contain only the current set name, not model references
     char head_path[PATH_MAX];
     char temp_path[PATH_MAX];
     snprintf(head_path, sizeof(head_path), "%s/.eb/HEAD", base_dir);
     snprintf(temp_path, sizeof(temp_path), "%s/.eb/HEAD.tmp", base_dir);
     FILE *head_fp, *temp_fp;
     char line[MAX_LINE_LEN];
-    bool found = false;
+    bool has_set_name = false;
+    char set_name[128] = "";
     
     // Open HEAD file for reading
     head_fp = fopen(head_path, "r");
-    if (!head_fp) {
-        // If HEAD doesn't exist, create it
-        head_fp = fopen(head_path, "w");
-        if (!head_fp) {
-            fprintf(stderr, "Warning: Failed to create HEAD file\n");
-        } else {
-            // Use the reference format: "ref: model hash"
-            fprintf(head_fp, "ref: %s %s\n", provider ? provider : "unknown", hash_str);
-            fclose(head_fp);
-        }
-    } else {
+    if (head_fp) {
         // Create temp file for writing
         temp_fp = fopen(temp_path, "w");
         if (!temp_fp) {
             fclose(head_fp);
             fprintf(stderr, "Warning: Failed to create temporary HEAD file\n");
         } else {
-            // Read HEAD and update/add entry for this model
+            // Read HEAD and keep only the set name
             while (fgets(line, sizeof(line), head_fp)) {
-                char curr_model[128];
-                char curr_hash[65];
-                
                 // Remove newline
                 line[strcspn(line, "\n")] = 0;
                 
-                if (sscanf(line, "ref: %s %s", curr_model, curr_hash) == 2) {
-                    if (provider && strcmp(curr_model, provider) == 0) {
-                        // Update existing model reference
-                        fprintf(temp_fp, "ref: %s %s\n", provider, hash_str);
-                        found = true;
-                    } else {
-                        // Keep other model references unchanged
-                        fprintf(temp_fp, "%s\n", line);
-                    }
-                } else {
-                    // Keep any other lines unchanged
+                // Check if this is a set name line (not starting with "ref:")
+                if (strncmp(line, "ref:", 4) != 0) {
+                    // Keep non-reference lines unchanged
                     fprintf(temp_fp, "%s\n", line);
+                    
+                    // If this looks like a set name, remember it
+                    if (line[0] != '{' && line[0] != '\0') {
+                        strncpy(set_name, line, sizeof(set_name) - 1);
+                        set_name[sizeof(set_name) - 1] = '\0';
+                        has_set_name = true;
+                    }
                 }
             }
             
-            // Add new model reference if not found
-            if (!found) {
-                fprintf(temp_fp, "ref: %s %s\n", provider ? provider : "unknown", hash_str);
+            // Make sure set name is included
+            if (!has_set_name && set_name[0] == '\0') {
+                // Default to "main" if no set name found
+                fprintf(temp_fp, "main\n");
             }
             
             fclose(head_fp);
@@ -2009,6 +2216,16 @@ eb_status_t store_embedding_file(const char* embedding_path, const char* source_
             if (rename(temp_path, head_path) != 0) {
                 fprintf(stderr, "Warning: Failed to update HEAD file\n");
             }
+        }
+    } else {
+        // If HEAD doesn't exist, create it with default set name
+        head_fp = fopen(head_path, "w");
+        if (!head_fp) {
+            fprintf(stderr, "Warning: Failed to create HEAD file\n");
+        } else {
+            // Just write the set name (default to "main")
+            fprintf(head_fp, "main\n");
+            fclose(head_fp);
         }
     }
 
@@ -2382,7 +2599,89 @@ eb_status_t get_current_hash_with_model(const char* root, const char* source, co
     }
     DEBUG_PRINT("get_current_hash_with_model: Using relative source path: %s\n", rel_source);
 
-    // First check HEAD file
+    // First check refs/models directory
+    char model_ref_path[PATH_MAX];
+    snprintf(model_ref_path, sizeof(model_ref_path), "%s/.eb/refs/models/%s", root, model);
+    DEBUG_PRINT("get_current_hash_with_model: Checking model ref file: %s\n", model_ref_path);
+
+    FILE* model_fp = fopen(model_ref_path, "r");
+    if (model_fp) {
+        char line[PATH_MAX + 65]; // Hash (64) + space + path + null terminator
+        bool found = false;
+        
+        while (fgets(line, sizeof(line), model_fp)) {
+            // Remove any trailing newline
+            line[strcspn(line, "\n")] = 0;
+            
+            char file_hash[65];
+            char file_path[PATH_MAX];
+            
+            if (sscanf(line, "%s %s", file_hash, file_path) == 2) {
+                if (strcmp(file_path, rel_source) == 0) {
+                    // Found a match for this file
+                    DEBUG_PRINT("get_current_hash_with_model: Found hash in model ref for file %s: %s\n", 
+                              rel_source, file_hash);
+                    strncpy(hash_out, file_hash, hash_size - 1);
+                    hash_out[hash_size - 1] = '\0';
+                    found = true;
+                    break;
+                }
+            } else if (strlen(line) > 0 && !strchr(line, ' ')) {
+                // For backward compatibility - if no space in line, assume it's just a hash
+                // from the old format
+                DEBUG_PRINT("get_current_hash_with_model: Found old-format hash in model ref: %s\n", line);
+                
+                // Only use this hash if we can verify it belongs to this file
+                bool hash_verified = false;
+                
+                // Check log file to verify the hash belongs to this file
+                char log_path[PATH_MAX];
+                snprintf(log_path, sizeof(log_path), "%s/.eb/log", root);
+                DEBUG_PRINT("get_current_hash_with_model: Verifying hash in log: %s\n", log_path);
+                
+                FILE* log_fp = fopen(log_path, "r");
+                if (log_fp) {
+                    char log_line[2048];
+                    
+                    while (fgets(log_line, sizeof(log_line), log_fp)) {
+                        char timestamp[32], log_hash[65], log_file[PATH_MAX], provider[32];
+                        log_line[strcspn(log_line, "\n")] = 0;
+                        
+                        if (sscanf(log_line, "%s %s %s %s", timestamp, log_hash, log_file, provider) == 4) {
+                            if (strcmp(log_file, rel_source) == 0 && 
+                                strcmp(provider, model) == 0 && 
+                                strcmp(log_hash, line) == 0) {
+                                // Found a matching entry for this file, model, and hash
+                                hash_verified = true;
+                                break;
+                            }
+                        }
+                    }
+                    fclose(log_fp);
+                    
+                    if (hash_verified) {
+                        // Hash is valid for this file
+                        strncpy(hash_out, line, hash_size - 1);
+                        hash_out[hash_size - 1] = '\0';
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+        
+        fclose(model_fp);
+        
+        if (found) {
+            return EB_SUCCESS;
+        }
+        
+        DEBUG_PRINT("get_current_hash_with_model: No matching entry found in model ref file\n");
+    } else {
+        DEBUG_PRINT("get_current_hash_with_model: Model ref file not found, checking HEAD\n");
+    }
+
+    // If not found in refs/models, fall back to HEAD file (for backward compatibility)
     char head_path[PATH_MAX];
     snprintf(head_path, sizeof(head_path), "%s/.eb/HEAD", root);
     DEBUG_PRINT("get_current_hash_with_model: Checking HEAD file: %s\n", head_path);
@@ -2413,7 +2712,7 @@ eb_status_t get_current_hash_with_model(const char* root, const char* source, co
         DEBUG_PRINT("get_current_hash_with_model: HEAD file not found or not readable, checking index\n");
     }
 
-    // If not found in HEAD, check index file for this source file and model
+    // If not found in refs/models or HEAD, check index file for this source file and model
     char index_path[PATH_MAX];
     snprintf(index_path, sizeof(index_path), "%s/.eb/index", root);
     DEBUG_PRINT("get_current_hash_with_model: Checking index file: %s\n", index_path);

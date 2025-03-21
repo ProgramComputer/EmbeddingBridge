@@ -42,6 +42,28 @@ const char* eb_status_str(eb_status_t status)
                 return "Invalid name";
         case EB_ERROR_NOT_IMPLEMENTED:
                 return "Not implemented";
+        case EB_ERROR_LOCK_FAILED:
+                return "Failed to acquire lock";
+        case EB_ERROR_REFERENCED:
+                return "Object is still referenced";
+        case EB_ERROR_CONNECTION_FAILED:
+                return "Connection failed";
+        case EB_ERROR_UNSUPPORTED:
+                return "Operation not supported";
+        case EB_ERROR_INITIALIZATION:
+                return "Initialization failed";
+        case EB_ERROR_NOT_CONNECTED:
+                return "Not connected";
+        case EB_ERROR_AUTHENTICATION:
+                return "Authentication failed";
+        case EB_ERROR_INVALID_REPOSITORY:
+                return "Invalid repository structure";
+        case EB_ERROR_CONNECTION_CLOSED:
+                return "Connection closed";
+        case EB_ERROR_PROCESS_FAILED:
+                return "Process execution failed";
+        case EB_ERROR_DEPENDENCY_MISSING:
+                return "Required dependency missing";
                 
         /* Remote operation errors */
         case EB_ERROR_REMOTE_NOTFOUND:

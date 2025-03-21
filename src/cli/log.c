@@ -20,7 +20,7 @@
 #include "../core/debug.h"
 #include "../core/error.h"
 #include "../core/types.h"
-#include "../core/eb_store.h"
+#include "../core/store.h"
 
 /* Return codes */
 #define LOG_SUCCESS          0

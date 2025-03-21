@@ -18,7 +18,7 @@
 #include "../core/git_types.h"
 #include "../core/diff_types.h"
 #include "../core/embedding.h"
-#include "../core/eb_store.h"
+#include "../core/store.h"
 
 // Version definition is now in types.h
 
@@ -34,12 +34,10 @@ typedef struct {
     const char* models;         // Models to use for diff (comma-separated)
     const char* second_model;   // Second model parsed from models
     bool use_git;              // Whether to use Git integration
-    bool use_file;             // Use file as input (for query)
     bool use_color;            // Use colored output
     bool verbose;              // Show detailed output
     bool quiet;                // Minimal output
     float threshold;           // Similarity threshold
-    int top_k;                // Number of results (for query)
     bool interactive;         // Interactive mode
     int k_neighbors;         // Number of neighbors for diff
     bool force;                // Force operation
@@ -51,7 +49,6 @@ typedef struct {
 int cmd_init(int argc, char** argv);
 int cmd_store(int argc, char** argv);
 int cmd_diff(int argc, char** argv);
-int cmd_query(int argc, char** argv);
 int cmd_hooks(int argc, char** argv);
 int cmd_config(int argc, char** argv);
 int cmd_remote(int argc, char** argv);
@@ -63,6 +60,8 @@ int cmd_set(int argc, char **argv);
 int cmd_switch(int argc, char **argv);
 int cmd_merge(int argc, char **argv);
 int cmd_gc(int argc, char **argv);
+int cmd_get(int argc, char **argv);
+int cmd_rm(int argc, char **argv);
 
 // Option parsing
 bool parse_cli_options(int argc, char** argv, eb_cli_options_t* opts);
@@ -73,6 +72,30 @@ bool is_option_with_value(const char* arg);
 float get_float_option(int argc, char** argv, const char* short_opt, const char* long_opt, float default_value);
 int get_int_option(int argc, char** argv, const char* short_opt, const char* long_opt, int default_value);
 const char* get_model(int argc, char** argv);
+
+/* Git-like option parser that allows options before or after positional arguments
+ * @param argc: Argument count
+ * @param argv: Argument vector
+ * @param options: Array of option definitions in the format of {"short", "long", has_arg, NULL, 'c'}
+ * @param option_count: Number of options in the array
+ * @param callback: Function to call for each option and arg found
+ * @param context: Optional context to pass to callback
+ * @param positional: Array to store positional arguments (can be NULL)
+ * @param positional_count: Pointer to store number of positional arguments (can be NULL)
+ * @return: 0 on success, non-zero on error
+ */
+typedef int (*option_callback_t)(char short_opt, const char* long_opt, const char* arg, void* context);
+
+int parse_git_style_options(
+    int argc, 
+    char** argv,
+    const char* short_opts,  // getopt style string "a:bc" where : means arg required
+    const char** long_opts,  // NULL-terminated array of long options
+    option_callback_t callback,
+    void* context,
+    char** positional,      // Array to store positional args
+    int* positional_count   // Output count of positional args
+);
 
 // Error handling
 void handle_error(eb_status_t status, const char* context);

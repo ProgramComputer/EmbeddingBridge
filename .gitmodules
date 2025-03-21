@@ -1,3 +1,40 @@
 [submodule "npy_array"]
 	path = npy_array
 	url = https://github.com/oysteijo/npy_array
+[submodule "arrow"]
+	path = vendor/arrow
+	url = https://github.com/apache/arrow.git
+[submodule "vendor/aws/aws-c-common"]
+	path = vendor/aws/aws-c-common
+	url = https://github.com/awslabs/aws-c-common.git
+[submodule "vendor/aws/aws-c-s3"]
+	path = vendor/aws/aws-c-s3
+	url = https://github.com/awslabs/aws-c-s3.git
+[submodule "vendor/aws/aws-c-auth"]
+	path = vendor/aws/aws-c-auth
+	url = https://github.com/awslabs/aws-c-auth.git
+[submodule "vendor/aws/aws-c-io"]
+	path = vendor/aws/aws-c-io
+	url = https://github.com/awslabs/aws-c-io.git
+[submodule "vendor/aws/aws-c-cal"]
+	path = vendor/aws/aws-c-cal
+	url = https://github.com/awslabs/aws-c-cal.git
+[submodule "vendor/aws/aws-c-http"]
+	path = vendor/aws/aws-c-http
+	url = https://github.com/awslabs/aws-c-http.git
+[submodule "vendor/aws/s2n-tls"]
+	path = vendor/aws/s2n-tls
+	url = https://github.com/aws/s2n-tls.git
+[submodule "vendor/aws/aws-lc"]
+	path = vendor/aws/aws-lc
+	url = https://github.com/aws/aws-lc.git
+
+[submodule "vendor/aws/aws-checksums"]
+	path = vendor/aws/aws-checksums
+	url = https://github.com/awslabs/aws-checksums.git
+[submodule "vendor/aws/aws-c-compression"]
+	path = vendor/aws/aws-c-compression
+	url = https://github.com/awslabs/aws-c-compression.git
+[submodule "vendor/aws/aws-c-sdkutils"]
+	path = vendor/aws/aws-c-sdkutils
+	url = https://github.com/awslabs/aws-c-sdkutils.git

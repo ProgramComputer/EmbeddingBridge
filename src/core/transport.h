@@ -18,10 +18,11 @@
  * Transport types supported by EmbeddingBridge
  */
 enum transport_type {
+	TRANSPORT_UNKNOWN = 0,
 	TRANSPORT_LOCAL,   /* Local filesystem access */
 	TRANSPORT_SSH,     /* SSH protocol */
 	TRANSPORT_HTTP,    /* HTTP(S) protocol */
-	TRANSPORT_UNKNOWN  /* Unknown/unsupported protocol */
+	TRANSPORT_S3
 };
 
 /* Forward declaration of transport structure */
@@ -58,6 +59,8 @@ struct eb_transport {
 	bool connected;               /* Connection state */
 	eb_status_t last_error;       /* Last error code */
 	char error_msg[256];          /* Last error message */
+	const char *target_path;      /* Target path for operations */
+	bool data_is_precompressed;  /* Flag to indicate if data is already compressed */
 };
 
 /**

@@ -1,14 +1,27 @@
 #ifndef EB_TYPES_H
 #define EB_TYPES_H
 
-#include <stddef.h>
+#include <stdlib.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include "error.h"  // Include error codes
+#include "status.h"
+
+/* Forward declarations */
+struct eb_store;
+typedef struct eb_store eb_store_t;
+
+/* Compression function declarations */
+bool eb_is_zstd_compressed(const void *buffer, size_t size);
+eb_status_t eb_compress_zstd(const void *source, size_t source_size, void **dest_out, size_t *dest_size_out, int level);
+eb_status_t eb_decompress_zstd(const void *source, size_t source_size, void **dest_out, size_t *dest_size_out);
 
 // Magic numbers for binary format
 #define EB_MAGIC_VECTOR 0x53564245  // "EBVS"
 #define EB_MAGIC_META  0x4D564245   // "EBVM"
+
+// Object flags
+#define EB_FLAG_COMPRESSED 0x01  // Object is compressed with ZSTD
+
 // START OF SET THE VERSION HERE
 // Version components
 #define EB_VERSION_MAJOR 0
@@ -92,12 +105,6 @@ typedef struct {
     uint32_t flags;        // Additional configuration flags
     size_t cache_size;     // Size of memory cache (0 for default)
 } eb_store_config_t;
-
-typedef struct {
-    eb_stored_vector_t* vectors;    // Hash table of vectors
-    char* storage_path;             // Path to storage directory
-    size_t vector_count;            // Number of stored vectors
-} eb_store_t;
 
 // Cross-model comparison method
 typedef enum {

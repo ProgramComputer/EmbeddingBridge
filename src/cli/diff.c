@@ -400,7 +400,182 @@ static float* load_stored_embedding(const char* hash, size_t *dims)
         cli_error("Not in an eb repository");
         return NULL;
     }
+
+    // Try using the store API first, which handles decompression properly
+    eb_store_t *store = NULL;
+    eb_store_config_t config = { .root_path = repo_root };
+    if (eb_store_init(&config, &store) == EB_SUCCESS) {
+        void *decompressed_data = NULL;
+        size_t decompressed_size = 0;
+        eb_object_header_t header;
+        
+        eb_status_t status = read_object(store, hash, &decompressed_data, &decompressed_size, &header);
+        
+        if (status == EB_SUCCESS && decompressed_data) {
+            // Dump the first bytes to help debug format
+            DEBUG_PRINT("First bytes in hex:");
+            char debug_buf[100] = {0};
+            for (size_t i = 0; i < 16 && i < decompressed_size; i++) {
+                sprintf(debug_buf + (i*3), "%02x ", ((unsigned char*)decompressed_data)[i]);
+            }
+            DEBUG_PRINT("%s", debug_buf);
+            
+            // Check specifically for binary format with dimension header
+            if (decompressed_size >= 4) {
+                uint32_t dim_header = 0;
+                memcpy(&dim_header, decompressed_data, sizeof(uint32_t));
+                
+                DEBUG_PRINT("Possible dimension header: %u (0x%08x)", dim_header, dim_header);
+                
+                // If this looks like a valid dimension count (1536 for OpenAI embeddings)
+                if (dim_header == 1536 || (dim_header > 100 && dim_header < 10000)) {
+                    DEBUG_PRINT("Found valid dimension header: %u", dim_header);
+                    
+                    // Set dimensions from header
+                    *dims = dim_header;
+                    
+                    // Skip the header and copy only the actual float data
+                    size_t data_size = dim_header * sizeof(float);
+                    float *data_copy = malloc(data_size);
+                    if (!data_copy) {
+                        cli_error("Out of memory");
+                        free(decompressed_data);
+                        eb_store_destroy(store);
+                        free(repo_root);
+                        return NULL;
+                    }
+                    
+                    // Copy data, skipping the 4-byte header
+                    memcpy(data_copy, (uint8_t*)decompressed_data + sizeof(uint32_t), data_size);
+                    
+                    DEBUG_PRINT("Successfully extracted %u-dimension embedding", dim_header);
+                    
+                    free(decompressed_data);
+                    eb_store_destroy(store);
+                    free(repo_root);
+                    return data_copy;
+                }
+            }
+            
+            // If no valid header found, use the original approach
+            // Determine the number of dimensions
+            *dims = decompressed_size / sizeof(float);
+            
+            DEBUG_PRINT("Successfully read and decompressed embedding: %zu bytes, %zu dimensions",
+                      decompressed_size, *dims);
+                      
+            // Dump the first bytes to help debug format
+            DEBUG_PRINT("First bytes in hex:");
+            for (size_t i = 0; i < 32 && i < decompressed_size; i++) {
+                DEBUG_PRINT("%02x ", ((unsigned char*)decompressed_data)[i]);
+            }
+            
+            // Make a copy of the decompressed data to return
+            float *data_copy = malloc(decompressed_size);
+            if (!data_copy) {
+                cli_error("Out of memory");
+                free(decompressed_data);
+                eb_store_destroy(store);
+                free(repo_root);
+                return NULL;
+            }
+            
+            memcpy(data_copy, decompressed_data, decompressed_size);
+            
+            // Debug first few values
+            DEBUG_PRINT("First 5 values from decompressed data:");
+            for (size_t i = 0; i < 5 && i < *dims; i++) {
+                DEBUG_PRINT("[%zu]: %f", i, data_copy[i]);
+            }
+            
+            free(decompressed_data);
+            eb_store_destroy(store);
+            free(repo_root);
+            return data_copy;
+        } else {
+            DEBUG_PRINT("Failed to read object using store API: %d", status);
+            
+            // Even if the store API fails, we can try to read and decompress the file directly
+            // Construct path to raw file
+            char raw_path[PATH_MAX];
+            snprintf(raw_path, sizeof(raw_path), "%s/.eb/objects/%s.raw", repo_root, hash);
+            
+            // Try to read and decompress the file directly
+            FILE *f = fopen(raw_path, "rb");
+            if (f) {
+                DEBUG_PRINT("Trying to read the object file directly: %s", raw_path);
+                
+                // Read the object header
+                eb_object_header_t header;
+                if (fread(&header, sizeof(header), 1, f) == 1) {
+                    DEBUG_PRINT("Read object header: magic=0x%08x, version=%u, flags=0x%08x, size=%u",
+                               header.magic, header.version, header.flags, header.size);
+                    
+                    // Get data size
+                    fseek(f, 0, SEEK_END);
+                    long file_size = ftell(f);
+                    size_t data_size = file_size - sizeof(header);
+                    fseek(f, sizeof(header), SEEK_SET);
+                    
+                    // Read the compressed data
+                    void *compressed_data = malloc(data_size);
+                    if (compressed_data && fread(compressed_data, 1, data_size, f) == data_size) {
+                        // Try to decompress it using ZSTD
+                        void *decompressed_data = NULL;
+                        size_t decompressed_size = 0;
+                        
+                        if (eb_decompress_zstd(compressed_data, data_size, 
+                                            &decompressed_data, &decompressed_size) == EB_SUCCESS) {
+                            DEBUG_PRINT("Successfully decompressed data directly: %zu bytes", decompressed_size);
+                            
+                            // Check if it has the dimension header format
+                            if (decompressed_size >= 4) {
+                                uint32_t dim_header = 0;
+                                memcpy(&dim_header, decompressed_data, sizeof(uint32_t));
+                                
+                                DEBUG_PRINT("Possible dimension header: %u (0x%08x)", dim_header, dim_header);
+                                
+                                // If this looks like a valid dimension count (1536 for OpenAI embeddings)
+                                if (dim_header == 1536 || (dim_header > 100 && dim_header < 10000)) {
+                                    DEBUG_PRINT("Found valid dimension header: %u", dim_header);
+                                    
+                                    // Set dimensions from header
+                                    *dims = dim_header;
+                                    
+                                    // Skip the header and copy only the actual float data
+                                    size_t data_size = dim_header * sizeof(float);
+                                    float *data_copy = malloc(data_size);
+                                    if (data_copy) {
+                                        // Copy data, skipping the 4-byte header
+                                        memcpy(data_copy, (uint8_t*)decompressed_data + sizeof(uint32_t), data_size);
+                                        
+                                        DEBUG_PRINT("Successfully extracted %u-dimension embedding from direct file", dim_header);
+                                        
+                                        free(decompressed_data);
+                                        free(compressed_data);
+                                        fclose(f);
+                                        eb_store_destroy(store);
+                                        free(repo_root);
+                                        return data_copy;
+                                    }
+                                }
+                            }
+                            
+                            free(decompressed_data);
+                        }
+                        
+                        free(compressed_data);
+                    }
+                }
+                
+                fclose(f);
+            }
+        }
+    } else {
+        DEBUG_PRINT("Failed to initialize store, falling back to direct file reading");
+    }
     
+    // Original implementation as fallback
     // Construct path to raw file
     char raw_path[PATH_MAX];
     snprintf(raw_path, sizeof(raw_path), "%s/.eb/objects/%s.raw", repo_root, hash);
@@ -578,7 +753,12 @@ static float* load_embedding_with_model(const char* path_or_hash, const char* mo
         DEBUG_PRINT("Looking for hash with model %s for file: %s\n", model ? model : "NULL", rel_path);
         
         if (model && get_current_hash_with_model(repo_root, rel_path, model, hash, sizeof(hash)) == EB_SUCCESS) {
-            DEBUG_PRINT("Found hash %s for file %s with model %s\n", hash, rel_path, model);
+            // For diff command, we want to use the current hash from the model ref file or index,
+            // which has already been properly updated by rollback and other commands.
+            // This ensures we're comparing the correct version that the user intends to use,
+            // not necessarily the most recent one in the log.
+            
+            DEBUG_PRINT("Using hash %s for file %s with model %s\n", hash, rel_path, model);
             char* resolved = resolve_hash(hash);
             if (resolved) {
                 DEBUG_PRINT("Successfully resolved hash %s to %s\n", hash, resolved);
@@ -871,7 +1051,7 @@ static char* get_default_model() {
     
     // Try to read config file
     char config_path[PATH_MAX];
-    snprintf(config_path, sizeof(config_path), "%s/.eb/config.json", repo_root);
+    snprintf(config_path, sizeof(config_path), "%s/.eb/config", repo_root);
     
     FILE* fp = fopen(config_path, "r");
     if (!fp) {
@@ -879,61 +1059,80 @@ static char* get_default_model() {
         return NULL;
     }
     
-    // Read the entire file
-    char buffer[4096] = {0};
-    size_t bytes_read = fread(buffer, 1, sizeof(buffer) - 1, fp);
+    // Read file line by line looking for model.default
+    char line[1024];
+    bool in_model_section = false;
+    
+    while (fgets(line, sizeof(line), fp)) {
+        // Remove newline
+        size_t len = strlen(line);
+        if (len > 0 && line[len-1] == '\n') {
+            line[len-1] = '\0';
+            len--;
+        }
+        
+        // Skip empty lines and comments
+        if (len == 0 || line[0] == '#')
+            continue;
+        
+        // Check for section headers
+        if (line[0] == '[') {
+            in_model_section = (strncmp(line, "[model]", 7) == 0);
+            continue;
+        }
+        
+        // If we're in the model section, look for default setting
+        if (in_model_section) {
+            char* eq = strchr(line, '=');
+            if (eq) {
+                // Extract key (trim whitespace)
+                char key[64] = {0};
+                char* k = line;
+                char* k_end = eq - 1;
+                
+                // Trim leading whitespace from key
+                while (k <= k_end && isspace(*k)) k++;
+                
+                // Trim trailing whitespace from key
+                while (k_end >= k && isspace(*k_end)) k_end--;
+                
+                // Copy key
+                if (k_end >= k) {
+                    size_t key_len = k_end - k + 1;
+                    if (key_len >= sizeof(key)) key_len = sizeof(key) - 1;
+                    strncpy(key, k, key_len);
+                    key[key_len] = '\0';
+                }
+                
+                // If this is the default key, extract value
+                if (strcmp(key, "default") == 0) {
+                    // Extract value (trim whitespace)
+                    char* v = eq + 1;
+                    char* v_end = line + len - 1;
+                    
+                    // Trim leading whitespace from value
+                    while (v <= v_end && isspace(*v)) v++;
+                    
+                    // Trim trailing whitespace from value
+                    while (v_end >= v && isspace(*v_end)) v_end--;
+                    
+                    // Copy value
+                    if (v_end >= v) {
+                        size_t val_len = v_end - v + 1;
+                        if (val_len >= sizeof(default_model)) val_len = sizeof(default_model) - 1;
+                        strncpy(default_model, v, val_len);
+                        default_model[val_len] = '\0';
+                        break;
+                    }
+                }
+            }
+        }
+    }
+    
     fclose(fp);
-    
-    if (bytes_read == 0) {
-        free(repo_root);
-        return NULL;
-    }
-    
-    // Null-terminate the buffer
-    buffer[bytes_read] = '\0';
-    
-    // Very simple JSON parsing to find "default_model"
-    char* pos = strstr(buffer, "\"default_model\"");
-    if (!pos) {
-        free(repo_root);
-        return NULL;
-    }
-    
-    // Find the value
-    pos = strchr(pos, ':');
-    if (!pos) {
-        free(repo_root);
-        return NULL;
-    }
-    
-    // Skip whitespace
-    pos++;
-    while (*pos && isspace(*pos)) pos++;
-    
-    // Check if it's a string
-    if (*pos != '"') {
-        free(repo_root);
-        return NULL;
-    }
-    
-    // Extract the value
-    pos++;
-    char* end = strchr(pos, '"');
-    if (!end) {
-        free(repo_root);
-        return NULL;
-    }
-    
-    // Copy the value
-    size_t len = end - pos;
-    if (len >= sizeof(default_model)) {
-        len = sizeof(default_model) - 1;
-    }
-    strncpy(default_model, pos, len);
-    default_model[len] = '\0';
-    
     free(repo_root);
-    return default_model;
+    
+    return *default_model ? default_model : NULL;
 }
 
 int cmd_diff(int argc, char** argv) {
