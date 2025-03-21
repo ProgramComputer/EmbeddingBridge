@@ -42,7 +42,7 @@ static void test_compression(void) {
     assert(memcmp(compressed, TEST_STR, TEST_SIZE) == 0);
     
     /* Test decompression of uncompressed data */
-    status = decompress_buffer(compressed, compressed_size,
+    status = eb_decompress_zstd(compressed, compressed_size,
                               &decompressed, &decompressed_size);
     assert(status == EB_SUCCESS);
     assert(decompressed != NULL);
@@ -64,7 +64,7 @@ static void test_compression(void) {
         assert(compressed != NULL);
         
         /* Test decompression */
-        status = decompress_buffer(compressed, compressed_size,
+        status = eb_decompress_zstd(compressed, compressed_size,
                                   &decompressed, &decompressed_size);
         assert(status == EB_SUCCESS);
         assert(decompressed != NULL);
