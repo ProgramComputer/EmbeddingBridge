@@ -48,6 +48,26 @@ static struct eb_transformer* parquet_transformer_clone(const struct eb_transfor
 static eb_status_t read_metadata_from_meta_file(const char* hash_str, char** source, char** model, char** timestamp);
 static void extract_schema_metadata(GArrowSchema* schema, char** hash, char** source, char** model, char** timestamp, char** dimensions);
 
+/* Thread local storage for document text */
+static __thread char* tls_document_text = NULL;
+
+/**
+ * Set document text for the next parquet transform operation
+ * Text will be stored in the 'blob' column and cleared after transform
+ *
+ * @param text Document text to store in blob column (NULL to clear)
+ */
+void eb_parquet_set_document_text(const char* text) {
+    if (tls_document_text) {
+        free(tls_document_text);
+        tls_document_text = NULL;
+    }
+    
+    if (text) {
+        tls_document_text = strdup(text);
+    }
+}
+
 /* Configuration structure for the Parquet transformer */
 typedef struct {
     int compression_level;
@@ -453,11 +473,15 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
     /* Create metadata field (string type) */
     GArrowField* metadata_field = garrow_field_new("metadata", GARROW_DATA_TYPE(garrow_string_data_type_new()));
     
+    /* Create blob field (string type) */
+    GArrowField* blob_field = garrow_field_new("blob", GARROW_DATA_TYPE(garrow_string_data_type_new()));
+    
     /* Create schema with fields */
     GList* fields = NULL;
     fields = g_list_append(fields, id_field);
     fields = g_list_append(fields, values_field);
     fields = g_list_append(fields, metadata_field);
+    fields = g_list_append(fields, blob_field);
     
     GArrowSchema* schema = garrow_schema_new(fields);
     g_list_free(fields);
@@ -557,6 +581,7 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
         g_object_unref(values_field);
         g_object_unref(id_field);
         g_object_unref(metadata_field);
+        g_object_unref(blob_field);
         g_object_unref(schema);
         if (metadata_json) free(metadata_json);
         if (need_to_free_decompressed) free(decompressed_data);
@@ -573,6 +598,7 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
     g_object_unref(values_field);
     g_object_unref(id_field);
     g_object_unref(metadata_field);
+    g_object_unref(blob_field);
     
     /* Create arrays for each column */
     /* ID array (single string - the hash) */
@@ -677,11 +703,67 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
     /* Free metadata JSON string */
     if (metadata_json) free(metadata_json);
     
+    /* Create blob array (single string) */
+    GArrowStringArrayBuilder* blob_builder = garrow_string_array_builder_new();
+
+    /* Create blob JSON */
+    char* blob_json = NULL;
+    if (tls_document_text) {
+        /* Create JSON with document text */
+        size_t blob_size = strlen(tls_document_text) + 50; /* Extra space for JSON format */
+        blob_json = (char*)malloc(blob_size);
+        if (blob_json) {
+            snprintf(blob_json, blob_size, "{\"text\":\"%s\"}", tls_document_text);
+        }
+        
+        /* Clear TLS after use */
+        free(tls_document_text);
+        tls_document_text = NULL;
+    } else {
+        /* No document text available */
+        blob_json = strdup("{}");
+    }
+
+    if (!blob_json) {
+        blob_json = strdup("{}");
+    }
+
+    garrow_string_array_builder_append_string(blob_builder, blob_json, &error);
+    if (error) {
+        DEBUG_ERROR("Failed to append blob value: %s", error->message);
+        g_object_unref(blob_builder);
+        free(blob_json);
+        g_object_unref(id_array);
+        g_object_unref(values_array);
+        g_object_unref(metadata_array);
+        g_object_unref(schema);
+        g_error_free(error);
+        if (need_to_free_decompressed) free(decompressed_data);
+        return EB_ERROR_IO;
+    }
+
+    GArrowArray* blob_array = GARROW_ARRAY(garrow_array_builder_finish(
+        GARROW_ARRAY_BUILDER(blob_builder), &error));
+    g_object_unref(blob_builder);
+    free(blob_json);
+
+    if (error) {
+        DEBUG_ERROR("Failed to finish blob array: %s", error->message);
+        g_object_unref(id_array);
+        g_object_unref(values_array);
+        g_object_unref(metadata_array);
+        g_object_unref(schema);
+        g_error_free(error);
+        if (need_to_free_decompressed) free(decompressed_data);
+        return EB_ERROR_IO;
+    }
+    
     /* Create record batch from arrays */
     GList* arrays = NULL;
     arrays = g_list_append(arrays, id_array);
     arrays = g_list_append(arrays, values_array);
     arrays = g_list_append(arrays, metadata_array);
+    arrays = g_list_append(arrays, blob_array);
     
     GArrowRecordBatch* record_batch = garrow_record_batch_new(schema, 1, arrays, &error);
     if (error) {
@@ -1202,6 +1284,48 @@ static eb_status_t parquet_inverse_transform(struct eb_transformer* transformer,
     }
     if (model_str) {
         DEBUG_INFO("Extracted metadata - model: %s", model_str);
+    }
+    
+    /* Extract blob if present */
+    gint blob_col_index = garrow_table_get_n_columns(table) > 3 ? 3 : -1;
+    if (blob_col_index >= 0) {
+        DEBUG_INFO("Found blob column, extracting values");
+        GArrowChunkedArray *blob_chunked = garrow_table_get_column_data(table, blob_col_index);
+        if (blob_chunked && garrow_chunked_array_get_n_chunks(blob_chunked) > 0) {
+            GArrowArray *blob_array = garrow_chunked_array_get_chunk(blob_chunked, 0);
+            if (blob_array) {
+                GArrowStringArray *blob_string_array = GARROW_STRING_ARRAY(blob_array);
+                if (blob_string_array) {
+                    const gchar *blob_json = garrow_string_array_get_string(blob_string_array, 0);
+                    if (blob_json) {
+                        DEBUG_INFO("Blob JSON: %s", blob_json);
+                        
+                        /* Parse JSON to extract text if needed */
+                        const char* text_start = strstr(blob_json, "\"text\":\"");
+                        if (text_start) {
+                            text_start += 8; /* Skip "text":"" */
+                            const char* text_end = strchr(text_start, '\"');
+                            if (text_end) {
+                                size_t text_len = text_end - text_start;
+                                
+                                /* Store the document text for potential future use */
+                                char* extracted_text = (char*)malloc(text_len + 1);
+                                if (extracted_text) {
+                                    strncpy(extracted_text, text_start, text_len);
+                                    extracted_text[text_len] = '\0';
+                                    
+                                    /* Set as TLS for next operation if needed */
+                                    eb_parquet_set_document_text(extracted_text);
+                                    free(extracted_text);
+                                }
+                            }
+                        }
+                    }
+                }
+                g_object_unref(blob_array);
+            }
+            g_object_unref(blob_chunked);
+        }
     }
     
     /* Free all objects in reverse order of creation, with proper NULL checks */

@@ -404,6 +404,7 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
                             if (meta_file) {
                                 time_t file_timestamp = 0;
                                 char provider[128] = {0};
+                                char source_file_path[PATH_MAX] = {0}; // Store the source file path
                                 
                                 char meta_line[1024];
                                 while (fgets(meta_line, sizeof(meta_line), meta_file)) {
@@ -423,9 +424,53 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
                                         file_timestamp = atol(meta_line + 10);
                                         DEBUG_INFO("Found timestamp in metadata: %ld", (long)file_timestamp);
                                     }
+                                    
+                                    /* Look for source file field */
+                                    if (strncmp(meta_line, "source_file=", 12) == 0) {
+                                        strncpy(source_file_path, meta_line + 12, sizeof(source_file_path) - 1);
+                                        
+                                        /* Remove newline if present */
+                                        char *newline = strchr(source_file_path, '\n');
+                                        if (newline) *newline = '\0';
+                                        
+                                        DEBUG_INFO("Found source file in metadata: %s", source_file_path);
+                                    }
                                 }
                                 
                                 fclose(meta_file);
+                                
+                                /* Load source document text for blob field if source file exists */
+                                if (source_file_path[0] != '\0') {
+                                    FILE *source_file = fopen(source_file_path, "r");
+                                    if (source_file) {
+                                        DEBUG_INFO("Reading document text from source: %s", source_file_path);
+                                        
+                                        /* Determine file size */
+                                        fseek(source_file, 0, SEEK_END);
+                                        long source_size = ftell(source_file);
+                                        fseek(source_file, 0, SEEK_SET);
+                                        
+                                        /* Allocate buffer for document text */
+                                        char *document_text = (char*)malloc(source_size + 1);
+                                        if (document_text) {
+                                            size_t bytes_read = fread(document_text, 1, source_size, source_file);
+                                            document_text[bytes_read] = '\0';
+                                            
+                                            /* Set document text for Parquet transformer */
+                                            extern void eb_parquet_set_document_text(const char* text);
+                                            DEBUG_INFO("Setting document text for blob field (%zu bytes)", bytes_read);
+                                            eb_parquet_set_document_text(document_text);
+                                            
+                                            free(document_text);
+                                        } else {
+                                            DEBUG_ERROR("Failed to allocate memory for document text");
+                                        }
+                                        
+                                        fclose(source_file);
+                                    } else {
+                                        DEBUG_WARN("Could not open source file: %s", source_file_path);
+                                    }
+                                }
                                 
                                 /* Use the metadata information */
                                 if (file_timestamp > 0) {

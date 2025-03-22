@@ -49,4 +49,12 @@ struct eb_transformer *eb_parquet_transformer_create(int compression_level);
  */
 eb_status_t eb_register_parquet_transformer(void);
 
+/**
+ * Set document text for the next parquet transform operation
+ * Text will be stored in the 'blob' column and cleared after transform
+ *
+ * @param text Document text to store in blob column (NULL to clear)
+ */
+void eb_parquet_set_document_text(const char* text);
+
 #endif /* EB_PARQUET_TRANSFORMER_H */ 
