@@ -420,6 +420,49 @@ static float* load_stored_embedding(const char* hash, size_t *dims)
             }
             DEBUG_PRINT("%s", debug_buf);
             
+            // Check for NumPy magic string '\x93NUMPY' 
+            if (decompressed_size >= 10 && memcmp(decompressed_data, "\x93NUMPY", 6) == 0) {
+                DEBUG_PRINT("Detected NumPy array format (.npy) in decompressed data");
+                
+                // Extract header size from NumPy format (stored at offset 8 as uint16)
+                uint16_t header_size = *((const uint16_t*)((const uint8_t*)decompressed_data + 8));
+                
+                // Calculate data offset
+                size_t data_offset = 10 + header_size;
+                
+                if (decompressed_size > data_offset) {
+                    // Set dimensions - for numpy arrays, this will typically be the first dimension
+                    // in the shape array, which is the number of elements in the array
+                    float* float_data = (float*)((uint8_t*)decompressed_data + data_offset);
+                    *dims = (decompressed_size - data_offset) / sizeof(float);
+                    
+                    DEBUG_PRINT("NumPy array has %zu dimensions/elements", *dims);
+                    
+                    // Make a copy of the float data to return
+                    float *data_copy = malloc(*dims * sizeof(float));
+                    if (!data_copy) {
+                        cli_error("Out of memory");
+                        free(decompressed_data);
+                        eb_store_destroy(store);
+                        free(repo_root);
+                        return NULL;
+                    }
+                    
+                    memcpy(data_copy, float_data, *dims * sizeof(float));
+                    
+                    // Debug first few values
+                    DEBUG_PRINT("First 5 values from numpy array:");
+                    for (size_t i = 0; i < 5 && i < *dims; i++) {
+                        DEBUG_PRINT("[%zu]: %f", i, data_copy[i]);
+                    }
+                    
+                    free(decompressed_data);
+                    eb_store_destroy(store);
+                    free(repo_root);
+                    return data_copy;
+                }
+            }
+            
             // Check specifically for binary format with dimension header
             if (decompressed_size >= 4) {
                 uint32_t dim_header = 0;
@@ -527,6 +570,40 @@ static float* load_stored_embedding(const char* hash, size_t *dims)
                         if (eb_decompress_zstd(compressed_data, data_size, 
                                             &decompressed_data, &decompressed_size) == EB_SUCCESS) {
                             DEBUG_PRINT("Successfully decompressed data directly: %zu bytes", decompressed_size);
+                            
+                            // Check if it's a NumPy file
+                            if (decompressed_size >= 10 && memcmp(decompressed_data, "\x93NUMPY", 6) == 0) {
+                                DEBUG_PRINT("Detected NumPy array format (.npy) in directly decompressed data");
+                                
+                                // Extract header size from NumPy format (stored at offset 8 as uint16)
+                                uint16_t header_size = *((const uint16_t*)((const uint8_t*)decompressed_data + 8));
+                                
+                                // Calculate data offset
+                                size_t data_offset = 10 + header_size;
+                                
+                                if (decompressed_size > data_offset) {
+                                    // Set dimensions
+                                    float* float_data = (float*)((uint8_t*)decompressed_data + data_offset);
+                                    *dims = (decompressed_size - data_offset) / sizeof(float);
+                                    
+                                    DEBUG_PRINT("NumPy array has %zu dimensions/elements", *dims);
+                                    
+                                    // Make a copy of the float data to return
+                                    float *data_copy = malloc(*dims * sizeof(float));
+                                    if (data_copy) {
+                                        memcpy(data_copy, float_data, *dims * sizeof(float));
+                                        
+                                        DEBUG_PRINT("Successfully extracted NumPy array from direct file");
+                                        
+                                        free(decompressed_data);
+                                        free(compressed_data);
+                                        fclose(f);
+                                        eb_store_destroy(store);
+                                        free(repo_root);
+                                        return data_copy;
+                                    }
+                                }
+                            }
                             
                             // Check if it has the dimension header format
                             if (decompressed_size >= 4) {
