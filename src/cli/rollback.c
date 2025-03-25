@@ -171,12 +171,12 @@ static bool hash_in_history(const char* repo_root, const char* source_file, cons
 }
 
 /* Helper function to update the index file for a specific source file and hash */
-static eb_status_t update_index_entry(const char* repo_root, const char* source_file, const char* hash_to_rollback) {
+static eb_status_t update_index_entry(const char* repo_root, const char* source_file, const char* hash_to_rollback, const char* model) {
         char index_path[PATH_MAX];
         snprintf(index_path, sizeof(index_path), "%s/.eb/index", repo_root);
 
-        DEBUG_PRINT("update_index_entry: repo_root=%s, source_file=%s, hash_to_rollback=%s, index_path=%s\n",
-                   repo_root, source_file, hash_to_rollback, index_path);
+        DEBUG_PRINT("update_index_entry: repo_root=%s, source_file=%s, hash_to_rollback=%s, index_path=%s, model=%s\n",
+                   repo_root, source_file, hash_to_rollback, index_path, model ? model : "(null)");
 
         // Convert absolute source path to relative path
         const char* rel_source = source_file;
@@ -204,8 +204,49 @@ static eb_status_t update_index_entry(const char* repo_root, const char* source_
 
                 char file[PATH_MAX], hash[65];
                 if (sscanf(line, "%s %s", hash, file) == 2) {
+                        // If specific model is provided, check if this hash is for a different model
+                        bool should_keep = false;
+                        
                         if (strcmp(file, rel_source) != 0) {
-                                // Keep lines for other files
+                                // Different file, always keep
+                                should_keep = true;
+                        } else if (model) {
+                                // Same file but need to check if it's for a different model
+                                char meta_path[PATH_MAX];
+                                snprintf(meta_path, sizeof(meta_path), "%s/.eb/objects/%s.meta", repo_root, hash);
+                                
+                                FILE* meta_fp = fopen(meta_path, "r");
+                                if (meta_fp) {
+                                        char meta_line[1024];
+                                        bool found_model = false;
+                                        
+                                        while (fgets(meta_line, sizeof(meta_line), meta_fp)) {
+                                                if (strncmp(meta_line, "provider=", 9) == 0) {
+                                                        char hash_model[32];
+                                                        sscanf(meta_line + 9, "%s", hash_model);
+                                                        
+                                                        // Keep if models are different
+                                                        if (strcmp(hash_model, model) != 0) {
+                                                                should_keep = true;
+                                                                DEBUG_PRINT("update_index_entry: Keeping entry for different model: %s\n", hash_model);
+                                                        }
+                                                        found_model = true;
+                                                        break;
+                                                }
+                                        }
+                                        fclose(meta_fp);
+                                        
+                                        // If we didn't find a model, keep it to be safe
+                                        if (!found_model) {
+                                                should_keep = true;
+                                        }
+                                } else {
+                                        // Couldn't open metadata, keep to be safe
+                                        should_keep = true;
+                                }
+                        }
+                        
+                        if (should_keep) {
                                 lines = realloc(lines, (line_count + 1) * sizeof(char*));
                                 if (!lines) {
                                         fclose(fp);
@@ -485,7 +526,6 @@ static const char* get_default_model_for_file(const char* repo_root, const char*
         return model_count == 1 ? default_model : NULL;
 }
 
-/* Update the HEAD file to track the current hash for a model */
 static eb_status_t update_head_file(const char* repo_root, const char* source_file, 
                                    const char* hash_to_rollback, const char* model) {
         char head_path[PATH_MAX];
@@ -805,7 +845,7 @@ int cmd_rollback(int argc, char** argv) {
         DEBUG_PRINT("cmd_rollback: resolve_hash succeeded, full_hash=%s\n", full_hash);
         
         /* Update the index first */
-        status = update_index_entry(repo_root, abs_source_path, full_hash);
+        status = update_index_entry(repo_root, abs_source_path, full_hash, model);
         
         if (status == EB_SUCCESS) {
             DEBUG_PRINT("cmd_rollback: update_index_entry succeeded\n");

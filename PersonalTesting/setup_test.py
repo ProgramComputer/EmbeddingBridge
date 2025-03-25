@@ -51,6 +51,7 @@ def get_voyage_embedding(text, cache_key=None):
         "input_type": "document"
     }
     
+    print(f"Calling Voyage API for text: {text[:50]}...")
     response = requests.post(
         "https://api.voyageai.com/v1/embeddings",
         headers=headers,
@@ -81,6 +82,8 @@ def get_openai_embedding(text, cache_key=None):
         "model": "text-embedding-3-small",
         "encoding_format": "float"
     }
+    
+    print(f"Calling OpenAI API for text: {text[:50]}...")
     response = requests.post(
         "https://api.openai.com/v1/embeddings",
         headers=headers,
@@ -93,27 +96,6 @@ def get_openai_embedding(text, cache_key=None):
         embedding_cache[cache_key] = embedding
         
     return embedding
-
-def create_synthetic_embedding(base_embedding, variation=0.05, dims=None):
-    """Create a synthetic embedding based on an existing one with some variation"""
-    if dims is None:
-        dims = base_embedding.shape[0]
-    
-    if base_embedding is not None:
-        # Add random noise to the base embedding
-        noise = np.random.normal(0, variation, base_embedding.shape)
-        synthetic = base_embedding + noise
-        
-        # Normalize the embedding
-        norm = np.linalg.norm(synthetic)
-        if norm > 0:
-            synthetic = synthetic / norm
-    else:
-        # Generate a completely random embedding if no base is provided
-        synthetic = np.random.random(dims).astype(np.float32)
-        synthetic = synthetic / np.linalg.norm(synthetic)
-        
-    return synthetic
 
 def file_exists_and_not_empty(filepath):
     """Check if a file exists and is not empty"""
@@ -199,9 +181,6 @@ def create_test_files():
         "api_design.md": api_doc
     }
 
-    # Keep track of real embeddings for synthetic generation
-    real_embeddings = {}
-
     for filename, content in files.items():
         print(f"\nProcessing {filename}...")
         
@@ -212,40 +191,38 @@ def create_test_files():
             openai_emb = get_openai_embedding(content, cache_key=f"openai_{filename}")
             np.save(openai_path, openai_emb)
             print(f"Created {openai_path}")
-            real_embeddings['openai'] = openai_emb
             
             # Also save as binary
             openai_bin_path = f"test_files/{filename}.openai.bin"
             save_as_bin(openai_emb, openai_bin_path)
         else:
             print(f"Using existing OpenAI embedding: {openai_path}")
-            real_embeddings['openai'] = np.load(openai_path)
             
             # Create bin file if it doesn't exist
             openai_bin_path = f"test_files/{filename}.openai.bin"
             if not file_exists_and_not_empty(openai_bin_path):
-                save_as_bin(real_embeddings['openai'], openai_bin_path)
+                openai_emb = np.load(openai_path)
+                save_as_bin(openai_emb, openai_bin_path)
         
-        # Generate Voyage embedding as a synthetic version of OpenAI to reduce API calls
+        # Generate real Voyage embedding (only if not exists)
         voyage_path = f"test_files/{filename}.voyage.npy"
         if not file_exists_and_not_empty(voyage_path):
-            print("Creating synthetic Voyage embedding based on OpenAI embedding...")
-            voyage_emb = create_synthetic_embedding(real_embeddings['openai'])
+            print("Getting Voyage embedding for full document...")
+            voyage_emb = get_voyage_embedding(content, cache_key=f"voyage_{filename}")
             np.save(voyage_path, voyage_emb)
             print(f"Created {voyage_path}")
-            real_embeddings['voyage'] = voyage_emb
             
             # Also save as binary
             voyage_bin_path = f"test_files/{filename}.voyage.bin"
             save_as_bin(voyage_emb, voyage_bin_path)
         else:
             print(f"Using existing Voyage embedding: {voyage_path}")
-            real_embeddings['voyage'] = np.load(voyage_path)
             
             # Create bin file if it doesn't exist
             voyage_bin_path = f"test_files/{filename}.voyage.bin"
             if not file_exists_and_not_empty(voyage_bin_path):
-                save_as_bin(real_embeddings['voyage'], voyage_bin_path)
+                voyage_emb = np.load(voyage_path)
+                save_as_bin(voyage_emb, voyage_bin_path)
 
 def create_modified_files():
     """Create modified versions of test files to test rollback"""
@@ -277,11 +254,11 @@ def create_modified_files():
                 modified_openai_bin_path = "test_files/technical_doc.txt.modified.openai.bin"
                 save_as_bin(openai_emb, modified_openai_bin_path)
                 
-                # Create synthetic Voyage embedding
+                # Create real Voyage embedding
                 modified_voyage_path = "test_files/technical_doc.txt.modified.voyage.npy"
-                voyage_emb = create_synthetic_embedding(openai_emb)
+                voyage_emb = get_voyage_embedding(modified_tech_doc, cache_key="voyage_tech_modified")
                 np.save(modified_voyage_path, voyage_emb)
-                print(f"Created synthetic {modified_voyage_path}")
+                print(f"Created {modified_voyage_path}")
                 
                 # Also save as binary
                 modified_voyage_bin_path = "test_files/technical_doc.txt.modified.voyage.bin"
@@ -337,11 +314,11 @@ def create_modified_files():
                     modified_openai_bin_path = "test_files/api_design.md.modified.openai.bin"
                     save_as_bin(openai_emb, modified_openai_bin_path)
                     
-                    # Create synthetic Voyage embedding
+                    # Create real Voyage embedding
                     modified_voyage_path = "test_files/api_design.md.modified.voyage.npy"
-                    voyage_emb = create_synthetic_embedding(openai_emb)
+                    voyage_emb = get_voyage_embedding(modified_api_doc, cache_key="voyage_api_modified")
                     np.save(modified_voyage_path, voyage_emb)
-                    print(f"Created synthetic {modified_voyage_path}")
+                    print(f"Created {modified_voyage_path}")
                     
                     # Also save as binary
                     modified_voyage_bin_path = "test_files/api_design.md.modified.voyage.bin"
@@ -371,6 +348,7 @@ def print_test_commands():
     print("\n1. Initialize EmbeddingBridge in your project:")
     print("   eb init")
     print("   eb model register openai-3-small --dimensions 1536 --description \"OpenAI text-embedding-3-small model\"")
+    print("   eb model register voyage-2 --dimensions 1024 --description \"Voyage-2 embedding model\"")
     
     print("\n2. Create and set up the test files (this runs your setup script):")
     print("   python PersonalTesting/setup_test.py")
@@ -415,7 +393,7 @@ def print_test_commands():
     print("   # Compare using specific model")
     print("   eb diff --model openai-3-small <short hash> <short hash>")
     print("   # Compare using different models for each file")
-    print("   eb diff --models openai-3-small,voyage <short hash> <short hash>")
+    print("   eb diff --models openai-3-small,voyage-2 <short hash> <short hash>")
     
     print("\n8. Rollback to previous versions:")
     print("   # Rollback by file path (goes to previous version)")

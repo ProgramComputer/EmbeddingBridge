@@ -16,8 +16,8 @@ A command-line tool for managing and versioning embedding vectors. Think of it a
 
 ```bash
 make clean
-make DEBUG=0 all
-make DEBUG=0 install
+make all
+make install
 ```
 
 ## Quick Start

@@ -2678,41 +2678,12 @@ eb_status_t get_current_hash_with_model(const char* root, const char* source, co
         
         DEBUG_PRINT("get_current_hash_with_model: No matching entry found in model ref file\n");
     } else {
-        DEBUG_PRINT("get_current_hash_with_model: Model ref file not found, checking HEAD\n");
+        DEBUG_PRINT("get_current_hash_with_model: Model ref file not found, checking index\n");
     }
 
-    // If not found in refs/models, fall back to HEAD file (for backward compatibility)
-    char head_path[PATH_MAX];
-    snprintf(head_path, sizeof(head_path), "%s/.eb/HEAD", root);
-    DEBUG_PRINT("get_current_hash_with_model: Checking HEAD file: %s\n", head_path);
+    // Removed HEAD file check as it's not needed and used by another command
 
-    FILE* head_fp = fopen(head_path, "r");
-    if (head_fp) {
-        char line[MAX_LINE_LEN];
-        while (fgets(line, sizeof(line), head_fp)) {
-            char curr_model[128];
-            char curr_hash[65];
-            
-            // Remove newline
-            line[strcspn(line, "\n")] = 0;
-            
-            if (sscanf(line, "ref: %s %s", curr_model, curr_hash) == 2) {
-                if (strcmp(curr_model, model) == 0) {
-                    DEBUG_PRINT("get_current_hash_with_model: Found hash in HEAD: %s\n", curr_hash);
-                    strncpy(hash_out, curr_hash, hash_size - 1);
-                    hash_out[hash_size - 1] = '\0';
-                    fclose(head_fp);
-                    return EB_SUCCESS;
-                }
-            }
-        }
-        fclose(head_fp);
-        DEBUG_PRINT("get_current_hash_with_model: Entry not found in HEAD file, checking index\n");
-    } else {
-        DEBUG_PRINT("get_current_hash_with_model: HEAD file not found or not readable, checking index\n");
-    }
-
-    // If not found in refs/models or HEAD, check index file for this source file and model
+    // If not found in refs/models, check index file for this source file and model
     char index_path[PATH_MAX];
     snprintf(index_path, sizeof(index_path), "%s/.eb/index", root);
     DEBUG_PRINT("get_current_hash_with_model: Checking index file: %s\n", index_path);
@@ -2754,7 +2725,7 @@ eb_status_t get_current_hash_with_model(const char* root, const char* source, co
                                     if (strcmp(provider, model) == 0) {
                                         DEBUG_PRINT("get_current_hash_with_model: Model match found in index: %s\n", idx_hash);
                                         strncpy(hash_out, idx_hash, hash_size - 1);
-                    hash_out[hash_size - 1] = '\0';
+                                        hash_out[hash_size - 1] = '\0';
                                         found = true;
                                         break;
                                     }
@@ -2765,10 +2736,10 @@ eb_status_t get_current_hash_with_model(const char* root, const char* source, co
                         
                         if (found) {
                             fclose(index_fp);
-                    return EB_SUCCESS;
+                            return EB_SUCCESS;
+                        }
+                    }
                 }
-            }
-        }
             }
         }
         fclose(index_fp);

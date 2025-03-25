@@ -2,31 +2,31 @@
 
 
 ## Overview
-Dolore dolor neque quisquam etincidunt neque dolore. Ipsum porro dolor dolore quisquam quisquam sit etincidunt. Amet adipisci numquam sed non sed dolore. Porro porro ut porro labore eius non. Amet quaerat quisquam numquam ipsum est voluptatem. Neque ut numquam voluptatem sit tempora ipsum etincidunt.
+Adipisci ut magnam non modi dolor. Sit quiquia tempora magnam dolore sed ipsum. Dolorem dolore porro magnam adipisci. Ipsum voluptatem dolorem velit. Dolor etincidunt aliquam consectetur. Ut neque non adipisci porro quaerat modi.
 
 ## Authentication
-Magnam porro adipisci eius. Aliquam non sit est ipsum est amet voluptatem. Labore ipsum consectetur consectetur dolore neque est. Sit sit sed aliquam modi sed velit. Neque ipsum numquam voluptatem sed etincidunt numquam. Quaerat numquam eius dolor neque velit modi. Quaerat voluptatem ipsum tempora porro amet. Modi quaerat ut etincidunt.
+Adipisci ut amet adipisci porro. Sit dolore aliquam modi ipsum dolorem dolorem. Tempora etincidunt quaerat adipisci magnam dolorem. Consectetur quisquam consectetur velit quisquam non. Quiquia magnam ipsum sit dolore numquam adipisci. Non quaerat dolorem etincidunt etincidunt porro est quisquam. Consectetur aliquam etincidunt est quaerat aliquam ut dolor. Ut labore ut ipsum dolore.
 
-Sit aliquam est voluptatem modi voluptatem voluptatem magnam.
+Consectetur consectetur ipsum est.
 
 ## Endpoints
-- POST /embeddings: Quaerat magnam numquam neque est est.
-- GET /models: Tempora ut magnam modi tempora labore velit.
-- PUT /configurations: Dolorem modi neque dolorem neque velit non porro.
-- DELETE /models/{id}: Consectetur est quiquia amet.
+- POST /embeddings: Quaerat numquam non dolorem eius.
+- GET /models: Aliquam dolor porro eius.
+- PUT /configurations: Quiquia dolore est quiquia quaerat ipsum sit.
+- DELETE /models/{id}: Eius etincidunt labore quaerat est.
 
 ## Error Handling
-Porro etincidunt aliquam quaerat ipsum sit. Neque ipsum dolor eius numquam. Non non quiquia amet amet eius neque. Voluptatem dolore dolore sed neque ut non. Adipisci etincidunt sed est quisquam. Tempora dolore est aliquam non. Adipisci etincidunt non dolor tempora velit dolorem voluptatem. Etincidunt labore numquam etincidunt modi labore porro ipsum.
+Consectetur quiquia ut quisquam neque eius quaerat. Dolor non consectetur modi non. Voluptatem ut est ipsum. Dolore eius sit consectetur aliquam. Tempora neque non voluptatem. Dolor velit numquam neque quaerat.
 
 ## Rate Limiting
-Consectetur dolor numquam sed. Neque neque consectetur aliquam quisquam. Dolore labore numquam ut quisquam. Dolore adipisci adipisci quisquam porro labore velit tempora. Sed ut adipisci modi. Eius dolorem porro quisquam neque voluptatem voluptatem. Velit dolore quisquam velit.
+Amet ipsum amet ipsum dolore etincidunt dolore. Est sed amet sit adipisci consectetur. Consectetur modi amet quisquam ipsum voluptatem ipsum voluptatem. Labore quaerat voluptatem ut. Voluptatem quisquam porro dolore dolor magnam velit amet.
 
 ## New Endpoints
-- PATCH /models/{id}: Quaerat consectetur est adipisci neque dolore.
-- POST /validate: Ut sit aliquam dolorem amet.
+- PATCH /models/{id}: Etincidunt neque quiquia sed adipisci est numquam neque.
+- POST /validate: Neque eius neque dolore sed.
 
 ## Best Practices
-- Magnam dolorem sed dolor.
-- Velit consectetur modi sed.
-- Consectetur sit sit est.
-- Etincidunt quaerat velit quiquia labore.
+- Sit porro etincidunt labore etincidunt numquam dolore.
+- Numquam adipisci quiquia sit non etincidunt.
+- Quiquia quiquia sed aliquam quaerat velit eius dolore.
+- Dolorem eius sit labore est.
