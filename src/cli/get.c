@@ -17,6 +17,7 @@
 #include <fcntl.h>
 #include <libgen.h>
 #include <limits.h>
+#include <dirent.h>  /* For directory operations: opendir, readdir, closedir */
 
 #include "cli.h"
 #include "git_types.h"
@@ -25,80 +26,266 @@
 #include "debug.h"
 #include "remote.h"
 
+/* Define PATH_MAX if not already defined */
+#ifndef PATH_MAX
+#define PATH_MAX 4096
+#endif
+
 static void print_usage(void) {
-    printf("Usage: eb get [-h] [-o <path>] [--rev <commit>] <url> <path>\n\n");
-    printf("Download a file or directory from a repository\n\n");
+    printf("Usage: eb get [-h] [-o <filename>] <destination_dir> <hash>\n\n");
+    printf("Download an embedding file by hash to local destination\n\n");
     printf("Arguments:\n");
-    printf("  url              Path to the repository (local or remote)\n");
-    printf("  path             Path to a file or directory within the repository\n\n");
+    printf("  destination_dir   Directory where the embedding will be saved\n");
+    printf("  hash              Hash or short hash of the embedding to download\n\n");
     printf("Options:\n");
-    printf("  -o, --out <path>         Specify output path\n");
-    printf("  --rev <commit>           Revision to download (defaults to latest)\n");
-    printf("  --show-url               Show remote URL instead of downloading\n");
-    printf("  -f, --force              Force download even if output file exists\n");
+    printf("  -o, --out <filename>      Specify exact output filename (used as-is)\n");
+    printf("  -f, --force              Force download even if file exists\n");
     printf("  -v, --verbose            Show detailed output\n");
     printf("  -q, --quiet              Suppress output messages\n");
     printf("  -h, --help               Show this help message\n");
 }
 
-/*
- * Handle getting a file from a local repository
+/**
+ * Read metadata file to extract embedding information
+ * 
+ * @param meta_path Path to the metadata file
+ * @param source_file Output buffer for original source file
+ * @param file_type Output buffer for file type
+ * @param provider Output buffer for provider/model name
+ * @return true if successful, false otherwise
  */
-static int get_local_file(const char *repo_path, const char *path, const char *output_path, 
-                         const char *revision, bool force, bool verbose) {
-    char full_path[PATH_MAX];
+static bool read_metadata(const char *meta_path, char *source_file, char *file_type, char *provider) {
+    FILE *fp = fopen(meta_path, "r");
+    if (!fp) {
+        return false;
+    }
     
-    /* Check if we need to use a specific revision */
-    if (revision) {
-        /* Get the file from the Git history using the specified revision */
-        if (verbose) {
-            printf("Getting %s from revision %s in %s\n", path, revision, repo_path);
+    bool found_source = false;
+    bool found_type = false;
+    bool found_provider = false;
+    
+    char line[PATH_MAX];
+    while (fgets(line, sizeof(line), fp)) {
+        // Remove newline
+        line[strcspn(line, "\n")] = 0;
+        
+        if (strncmp(line, "source_file=", 12) == 0) {
+            strncpy(source_file, line + 12, PATH_MAX - 1);
+            found_source = true;
+        } else if (strncmp(line, "file_type=", 10) == 0) {
+            strncpy(file_type, line + 10, 32 - 1);
+            found_type = true;
+        } else if (strncmp(line, "provider=", 9) == 0) {
+            strncpy(provider, line + 9, 32 - 1);
+            found_provider = true;
         }
-        
-        /* TODO: Call git API to extract file from history */
-        /* For now, just return a message that the feature is not implemented */
-        fprintf(stderr, "Getting from specific revision is not yet implemented\n");
-        return 1;
-    } else {
-        /* If no revision, just copy the file from the repo */
-        snprintf(full_path, sizeof(full_path), "%s/%s", repo_path, path);
-        
-        /* Check if source exists */
-        struct stat st;
-        if (stat(full_path, &st) != 0) {
-            fprintf(stderr, "Error: File '%s' not found in repository\n", path);
-            return 1;
-        }
-        
-        /* Check if output file already exists */
-        if (!force && access(output_path, F_OK) == 0) {
-            fprintf(stderr, "Error: Output file '%s' already exists. Use --force to overwrite.\n", output_path);
-            return 1;
-        }
-        
-        /* Create output directory if needed */
-        char *output_dir = strdup(output_path);
-        char *dir = dirname(output_dir);
-        
-        /* Only create directory if it's not just "." */
-        if (strcmp(dir, ".") != 0) {
-            if (fs_mkdir_p(dir, 0755) != 0) {
-                fprintf(stderr, "Error: Failed to create output directory '%s'\n", dir);
-                free(output_dir);
-                return 1;
+    }
+    
+    fclose(fp);
+    return found_source && found_type;
+}
+
+/*
+ * Attempt to resolve a short hash to a full hash in local repository
+ */
+static bool resolve_hash(const char *repo_path, const char *short_hash, char *full_hash, size_t hash_size) {
+    char objects_dir[PATH_MAX];
+    snprintf(objects_dir, sizeof(objects_dir), "%s/.eb/objects", repo_path);
+    
+    DIR *dir = opendir(objects_dir);
+    if (!dir) return false;
+    
+    size_t hash_len = strlen(short_hash);
+    bool found = false;
+    
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        // Only look at .raw or .meta files
+        if (entry->d_type == DT_REG) {
+            char *ext = strrchr(entry->d_name, '.');
+            if (ext && (strcmp(ext, ".raw") == 0 || strcmp(ext, ".meta") == 0)) {
+                // Remove extension for comparison
+                *ext = '\0';
+                
+                // Compare with short hash
+                if (strncmp(entry->d_name, short_hash, hash_len) == 0) {
+                    if (found) {
+                        // Hash is ambiguous (multiple matches)
+                        closedir(dir);
+                        return false;
+                    }
+                    
+                    strncpy(full_hash, entry->d_name, hash_size - 1);
+                    full_hash[hash_size - 1] = '\0';
+                    found = true;
+                }
             }
         }
-        free(output_dir);
-        
-        /* Copy the file */
-        if (fs_copy_file(full_path, output_path) != 0) {
-            fprintf(stderr, "Error: Failed to copy file from '%s' to '%s'\n", full_path, output_path);
-            return 1;
+    }
+    
+    closedir(dir);
+    return found;
+}
+
+/*
+ * Check local repositories for the hash
+ */
+static bool find_local_hash(const char *hash, char *full_hash, char *repo_path, char *meta_path, char *object_path) {
+    // Check current directory first
+    char cwd[PATH_MAX];
+    if (!getcwd(cwd, sizeof(cwd))) {
+        return false;
+    }
+    
+    // Look in current directory's .eb
+    char local_repo[PATH_MAX];
+    snprintf(local_repo, sizeof(local_repo), "%s", cwd);
+    
+    char local_meta[PATH_MAX];
+    char local_object[PATH_MAX];
+    
+    // Check if we need to resolve the hash
+    char resolved_hash[65];
+    if (strlen(hash) < 64) {
+        if (!resolve_hash(local_repo, hash, resolved_hash, sizeof(resolved_hash))) {
+            return false;
         }
+    } else {
+        strncpy(resolved_hash, hash, sizeof(resolved_hash) - 1);
+        resolved_hash[sizeof(resolved_hash) - 1] = '\0';
+    }
+    
+    // Path to metadata and object files
+    snprintf(local_meta, sizeof(local_meta), "%s/.eb/objects/%s.meta", local_repo, resolved_hash);
+    snprintf(local_object, sizeof(local_object), "%s/.eb/objects/%s.raw", local_repo, resolved_hash);
+    
+    // Check if files exist
+    if (access(local_meta, F_OK) == 0 && access(local_object, F_OK) == 0) {
+        strncpy(full_hash, resolved_hash, 65);
+        strncpy(repo_path, local_repo, PATH_MAX);
+        strncpy(meta_path, local_meta, PATH_MAX);
+        strncpy(object_path, local_object, PATH_MAX);
+        return true;
+    }
+    
+    // TODO: Check other local repositories if needed
+    
+    return false;
+}
+
+/*
+ * Check remote repositories for the hash
+ */
+static bool find_remote_hash(const char *hash, char *full_hash, char *temp_meta_path, char *temp_object_path) {
+    // TODO: Implement remote repository search and download
+    // This would contact configured remote servers to find and download the hash
+    
+    // Not implemented yet
+    return false;
+}
+
+/*
+ * Handle getting a file by hash
+ */
+static int get_embedding_by_hash(
+    const char *dest_dir, 
+    const char *hash,
+    const char *output_filename,
+    bool force, 
+    bool verbose, 
+    bool quiet
+) {
+    // Check if destination directory exists
+    struct stat st;
+    if (stat(dest_dir, &st) != 0) {
+        if (!quiet) fprintf(stderr, "Error: Destination directory '%s' does not exist\n", dest_dir);
+        return 1;
+    }
+    
+    if (!S_ISDIR(st.st_mode)) {
+        if (!quiet) fprintf(stderr, "Error: '%s' is not a directory\n", dest_dir);
+        return 1;
+    }
+    
+    // First, try to find the hash in local repositories
+    char full_hash[65] = {0};
+    char repo_path[PATH_MAX] = {0};
+    char meta_path[PATH_MAX] = {0};
+    char object_path[PATH_MAX] = {0};
+    
+    bool found_local = find_local_hash(hash, full_hash, repo_path, meta_path, object_path);
+    
+    // If not found locally, try remote repositories
+    char temp_meta_path[PATH_MAX] = {0};
+    char temp_object_path[PATH_MAX] = {0};
+    bool found_remote = false;
+    
+    if (!found_local) {
+        found_remote = find_remote_hash(hash, full_hash, temp_meta_path, temp_object_path);
+    }
+    
+    if (!found_local && !found_remote) {
+        if (!quiet) fprintf(stderr, "Error: Embedding with hash '%s' not found\n", hash);
+        return 1;
+    }
+    
+    // Select the correct paths
+    const char *src_meta = found_local ? meta_path : temp_meta_path;
+    const char *src_object = found_local ? object_path : temp_object_path;
+    
+    // Read metadata to determine file type and original filename
+    char source_file[PATH_MAX] = {0};
+    char file_type[32] = {0};
+    char provider[32] = {0};
+    
+    if (!read_metadata(src_meta, source_file, file_type, provider)) {
+        if (!quiet) fprintf(stderr, "Error: Failed to read metadata for hash '%s'\n", hash);
+        return 1;
+    }
+    
+    // Generate output filename if not specified
+    char final_output[PATH_MAX] = {0};
+    if (output_filename) {
+        // Use the output filename exactly as provided by the user, without modifying extension
+        snprintf(final_output, sizeof(final_output), "%s/%s", dest_dir, output_filename);
+    } else {
+        // Use basename of original source file + hash + file type
+        char *src_basename = basename(strdup(source_file));
+        char *dot = strrchr(src_basename, '.');
+        if (dot) *dot = '\0'; // Remove extension
         
-        if (verbose) {
-            printf("Downloaded: %s -> %s\n", path, output_path);
-        }
+        snprintf(final_output, sizeof(final_output), "%s/%s_%s.%s", 
+                dest_dir, src_basename, hash, file_type);
+        
+        free(src_basename);
+    }
+    
+    // Check if output file already exists
+    if (!force && access(final_output, F_OK) == 0) {
+        if (!quiet) fprintf(stderr, "Error: Output file '%s' already exists. Use --force to overwrite.\n", final_output);
+        return 1;
+    }
+    
+    // Copy the embedding file
+    if (fs_copy_file(src_object, final_output) != 0) {
+        if (!quiet) fprintf(stderr, "Error: Failed to copy embedding to '%s'\n", final_output);
+        return 1;
+    }
+    
+    if (verbose) {
+        printf("Hash: %s\n", full_hash);
+        printf("Source file: %s\n", source_file);
+        printf("File type: %s\n", file_type);
+        printf("Provider: %s\n", provider);
+        printf("Downloaded to: %s\n", final_output);
+    } else if (!quiet) {
+        printf("✓ Downloaded embedding to %s\n", final_output);
+    }
+    
+    // Clean up any temporary files if we used remote repositories
+    if (found_remote) {
+        if (access(temp_meta_path, F_OK) == 0) unlink(temp_meta_path);
+        if (access(temp_object_path, F_OK) == 0) unlink(temp_object_path);
     }
     
     return 0;
@@ -108,11 +295,9 @@ static int get_local_file(const char *repo_path, const char *path, const char *o
  * Implementation of the get command
  */
 int cmd_get(int argc, char **argv) {
-    char *url = NULL;
-    char *path = NULL;
-    char *output_path = NULL;
-    char *revision = NULL;
-    bool show_url = false;
+    char *dest_dir = NULL;
+    char *hash = NULL;
+    char *output_filename = NULL;
     bool force = false;
     bool verbose = false;
     bool quiet = false;
@@ -125,30 +310,21 @@ int cmd_get(int argc, char **argv) {
             return 0;
         } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0) {
             if (i + 1 < argc) {
-                output_path = argv[++i];
+                output_filename = argv[++i];
             } else {
-                fprintf(stderr, "Error: Missing output path\n");
+                fprintf(stderr, "Error: Missing output filename\n");
                 return 1;
             }
-        } else if (strcmp(argv[i], "--rev") == 0) {
-            if (i + 1 < argc) {
-                revision = argv[++i];
-            } else {
-                fprintf(stderr, "Error: Missing revision\n");
-                return 1;
-            }
-        } else if (strcmp(argv[i], "--show-url") == 0) {
-            show_url = true;
         } else if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--force") == 0) {
             force = true;
         } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
             verbose = true;
         } else if (strcmp(argv[i], "-q") == 0 || strcmp(argv[i], "--quiet") == 0) {
             quiet = true;
-        } else if (url == NULL) {
-            url = argv[i];
-        } else if (path == NULL) {
-            path = argv[i];
+        } else if (dest_dir == NULL) {
+            dest_dir = argv[i];
+        } else if (hash == NULL) {
+            hash = argv[i];
         } else {
             fprintf(stderr, "Error: Too many arguments\n");
             print_usage();
@@ -157,64 +333,11 @@ int cmd_get(int argc, char **argv) {
     }
     
     /* Check for required arguments */
-    if (!url || !path) {
+    if (!dest_dir || !hash) {
         fprintf(stderr, "Error: Missing required arguments\n");
         print_usage();
         return 1;
     }
     
-    /* If output path not specified, use the basename of the path */
-    if (!output_path) {
-        output_path = basename(strdup(path));
-    }
-    
-    /* Determine if URL is local or remote */
-    bool is_local = false;
-    
-    /* For this simple implementation, consider paths starting with http://, https://, 
-     * ssh://, or git@ as remote, everything else as local */
-    if (strncmp(url, "http://", 7) != 0 && 
-        strncmp(url, "https://", 8) != 0 &&
-        strncmp(url, "ssh://", 6) != 0 && 
-        strncmp(url, "git@", 4) != 0) {
-        is_local = true;
-    }
-    
-    if (verbose) {
-        printf("URL: %s\n", url);
-        printf("Path: %s\n", path);
-        printf("Output: %s\n", output_path);
-        printf("Revision: %s\n", revision ? revision : "latest");
-        printf("Type: %s\n", is_local ? "local" : "remote");
-    }
-    
-    /* If showing URL only, print it and exit */
-    if (show_url) {
-        if (is_local) {
-            char full_path[PATH_MAX];
-            /* For local paths, just construct the full path */
-            if (path[0] == '/') {
-                snprintf(full_path, sizeof(full_path), "%s%s", url, path);
-            } else {
-                snprintf(full_path, sizeof(full_path), "%s/%s", url, path);
-            }
-            printf("%s\n", full_path);
-        } else {
-            /* For remote URLs, we'd need to generate the storage URL */
-            fprintf(stderr, "Remote URL discovery not yet implemented\n");
-            return 1;
-        }
-        return 0;
-    }
-    
-    /* Handle based on URL type */
-    if (is_local) {
-        return get_local_file(url, path, output_path, revision, force, verbose);
-    } else {
-        /* Remote repository handling would go here */
-        fprintf(stderr, "Remote repository support not yet implemented\n");
-        return 1;
-    }
-    
-    return 0;
+    return get_embedding_by_hash(dest_dir, hash, output_filename, force, verbose, quiet);
 } 
