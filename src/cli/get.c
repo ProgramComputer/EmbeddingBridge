@@ -32,7 +32,7 @@
 #endif
 
 static void print_usage(void) {
-    printf("Usage: eb get [-h] [-o <filename>] <destination_dir> <hash>\n\n");
+    printf("Usage: embr get [-h] [-o <filename>] <destination_dir> <hash>\n\n");
     printf("Download an embedding file by hash to local destination\n\n");
     printf("Arguments:\n");
     printf("  destination_dir   Directory where the embedding will be saved\n");
@@ -90,7 +90,7 @@ static bool read_metadata(const char *meta_path, char *source_file, char *file_t
  */
 static bool resolve_hash(const char *repo_path, const char *short_hash, char *full_hash, size_t hash_size) {
     char objects_dir[PATH_MAX];
-    snprintf(objects_dir, sizeof(objects_dir), "%s/.eb/objects", repo_path);
+    snprintf(objects_dir, sizeof(objects_dir), "%s/.embr/objects", repo_path);
     
     DIR *dir = opendir(objects_dir);
     if (!dir) return false;
@@ -137,7 +137,7 @@ static bool find_local_hash(const char *hash, char *full_hash, char *repo_path, 
         return false;
     }
     
-    // Look in current directory's .eb
+    // Look in current directory's .embr
     char local_repo[PATH_MAX];
     snprintf(local_repo, sizeof(local_repo), "%s", cwd);
     
@@ -156,8 +156,8 @@ static bool find_local_hash(const char *hash, char *full_hash, char *repo_path, 
     }
     
     // Path to metadata and object files
-    snprintf(local_meta, sizeof(local_meta), "%s/.eb/objects/%s.meta", local_repo, resolved_hash);
-    snprintf(local_object, sizeof(local_object), "%s/.eb/objects/%s.raw", local_repo, resolved_hash);
+    snprintf(local_meta, sizeof(local_meta), "%s/.embr/objects/%s.meta", local_repo, resolved_hash);
+    snprintf(local_object, sizeof(local_object), "%s/.embr/objects/%s.raw", local_repo, resolved_hash);
     
     // Check if files exist
     if (access(local_meta, F_OK) == 0 && access(local_object, F_OK) == 0) {

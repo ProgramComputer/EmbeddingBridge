@@ -44,7 +44,7 @@
 #define MAX_META_LEN 1024
 
 static const char *STATUS_USAGE = 
-    "Usage: eb status [options] <source>\n"
+    "Usage: embr status [options] <source>\n"
     "\n" 
     TEXT_BOLD "Show embedding status and log for a source file" COLOR_RESET "\n"
     "\n"
@@ -57,10 +57,10 @@ static const char *STATUS_USAGE =
     "  --help          Display this help message\n"
     "\n"
     "Examples:\n"
-    "  eb status file.txt         # Show basic status\n"
-    "  eb status -v file.txt      # Show detailed status with metadata\n"
-    "  eb status --model openai file.txt  # Show status for openai model only\n"
-    "  eb status file.txt -v      # Same as above (flexible ordering)\n";
+    "  embr status file.txt         # Show basic status\n"
+    "  embr status -v file.txt      # Show detailed status with metadata\n"
+    "  embr status --model openai file.txt  # Show status for openai model only\n"
+    "  embr status file.txt -v      # Same as above (flexible ordering)\n";
 
 // Forward declarations
 static int show_status(char** rel_paths, size_t num_paths, const char* repo_root);
@@ -82,7 +82,7 @@ static char* get_metadata(const char* root, const char* hash)
     DEBUG_PRINT("get_metadata: Starting with root=%s, hash=%s", root, hash);
     
     char meta_path[MAX_PATH_LEN];
-    snprintf(meta_path, sizeof(meta_path), "%s/.eb/objects/%s.meta", root, hash);
+    snprintf(meta_path, sizeof(meta_path), "%s/.embr/objects/%s.meta", root, hash);
     DEBUG_PRINT("get_metadata: Looking for metadata file at %s", meta_path);
 
     FILE *f = fopen(meta_path, "r");
@@ -126,7 +126,7 @@ static char* get_metadata(const char* root, const char* hash)
 // Get log entries
 static char* get_history(const char* root, const char* source, const char* model_filter) {
 	char log_path[MAX_PATH_LEN];
-	snprintf(log_path, sizeof(log_path), "%s/.eb/log", root);
+	snprintf(log_path, sizeof(log_path), "%s/.embr/log", root);
 
 	FILE *f = fopen(log_path, "r");
 	if (!f) return NULL;
@@ -452,7 +452,7 @@ static int show_status(char** rel_paths, size_t num_paths, const char* repo_root
             
             // First, get the log file path
             char log_path[PATH_MAX];
-            snprintf(log_path, sizeof(log_path), "%s/.eb/log", repo_root);
+            snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
             
             // Try to open the log file
             FILE* fp = fopen(log_path, "r");

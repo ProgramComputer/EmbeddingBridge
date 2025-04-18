@@ -20,7 +20,7 @@
  * Format types supported by EmbeddingBridge
  */
 typedef enum eb_format_type {
-    EB_FORMAT_NATIVE,   /* Native .eb format with .raw and .meta files */
+    EB_FORMAT_NATIVE,   /* Native .embr format with .raw and .meta files */
     EB_FORMAT_PARQUET,  /* Apache Parquet format with ZSTD compression */
     EB_FORMAT_PINECONE, /* Pinecone-compatible format */
     EB_FORMAT_UNKNOWN   /* Unknown/unsupported format */

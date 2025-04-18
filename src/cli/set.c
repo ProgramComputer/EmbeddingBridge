@@ -27,21 +27,21 @@
 #include "../core/store.h"
 #include "colors.h"
 
-#define SET_DIR ".eb/sets"
-#define CURRENT_SET_FILE ".eb/HEAD"
+#define SET_DIR ".embr/sets"
+#define CURRENT_SET_FILE ".embr/HEAD"
 #define DEFAULT_SET_NAME "main"
 
 /* Command usage strings */
 static const char* SET_USAGE = 
-    "Usage: eb set [options] [<set-name>]\n"
+    "Usage: embr set [options] [<set-name>]\n"
     "\n"
     "List or create sets. When no arguments are provided, lists existing sets.\n"
     "With <set-name> argument, creates a new set.\n"
     "\n"
     "Operations:\n"
-    "  eb set                   List all sets\n"
-    "  eb set <set-name>        Create a new set\n"
-    "  eb set -d <set-name>     Delete a set\n"
+    "  embr set                   List all sets\n"
+    "  embr set <set-name>        Create a new set\n"
+    "  embr set -d <set-name>     Delete a set\n"
     "\n"
     "Options:\n"
     "  -h, --help               Show this help message\n"
@@ -50,13 +50,13 @@ static const char* SET_USAGE =
     "  -f, --force              Force operation (for delete)\n"
     "\n"
     "Examples:\n"
-    "  eb set                   # List all sets\n"
-    "  eb set my-feature        # Create a new set named \"my-feature\"\n"
-    "  eb set -v                # List sets with details\n"
-    "  eb set -d my-feature     # Delete a set\n"
+    "  embr set                   # List all sets\n"
+    "  embr set my-feature        # Create a new set named \"my-feature\"\n"
+    "  embr set -v                # List sets with details\n"
+    "  embr set -d my-feature     # Delete a set\n"
     "\n"
-    "Run 'eb switch <set-name>' to switch between sets\n"
-    "Run 'eb merge <source-set>' to merge sets\n"
+    "Run 'embr switch <set-name>' to switch between sets\n"
+    "Run 'embr merge <source-set>' to merge sets\n"
     "\n";
 
 /* Subcommand handlers */
@@ -368,7 +368,7 @@ eb_status_t set_list(bool verbose)
 	free(set_dir);
 
 	if (!found)
-		printf("No sets found. Create one with 'eb set <name>'\n");
+		printf("No sets found. Create one with 'embr set <name>'\n");
 
 	return EB_SUCCESS;
 }

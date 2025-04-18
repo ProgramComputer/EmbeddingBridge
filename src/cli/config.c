@@ -16,7 +16,7 @@
  */
 
 static const char* CONFIG_USAGE = 
-    "Usage: eb config <command> [<args>]\n"
+    "Usage: embr config <command> [<args>]\n"
     "\n"
     "Manage embedding configuration\n"
     "\n"
@@ -28,16 +28,16 @@ static const char* CONFIG_USAGE =
     "\n"
     "Examples:\n"
     "  # Set default model\n"
-    "  eb config set model.default openai-3\n"
+    "  embr config set model.default openai-3\n"
     "\n"
     "  # Enable verbose Git hooks\n"
-    "  eb config set git.hooks.pre-commit.verbose true\n"
+    "  embr config set git.hooks.pre-commit.verbose true\n"
     "\n"
     "  # List all settings\n"
-    "  eb config list\n"
+    "  embr config list\n"
     "\n"
     "  # Get a specific setting\n"
-    "  eb config get model.default\n";
+    "  embr config get model.default\n";
 
 /*
  * File paths
@@ -54,7 +54,7 @@ static char* get_config_path(void)
 		return NULL;
 	}
 	
-	sprintf(config_path, "%s/.eb/config", eb_root);
+	sprintf(config_path, "%s/.embr/config", eb_root);
 	free(eb_root);
 	return config_path;
 }

@@ -3,7 +3,7 @@
 #include "cli.h"
 
 static const char* HOOKS_USAGE = 
-    "Usage: eb hooks <command> [options]\n"
+    "Usage: embr hooks <command> [options]\n"
     "\n"
     "Manage Git hooks\n"
     "\n"
@@ -18,14 +18,14 @@ static const char* HOOKS_USAGE =
     "\n"
     "Examples:\n"
     "  # Install hooks\n"
-    "  eb hooks install\n"
+    "  embr hooks install\n"
     "\n"
     "  # List hook status\n"
-    "  eb hooks list -v\n"
+    "  embr hooks list -v\n"
     "\n"
-    "Use 'eb config' to configure hook behavior:\n"
-    "  eb config set git.hooks.pre-commit.enabled true\n"
-    "  eb config set git.hooks.pre-commit.verbose true\n";
+    "Use 'embr config' to configure hook behavior:\n"
+    "  embr config set git.hooks.pre-commit.enabled true\n"
+    "  embr config set git.hooks.pre-commit.verbose true\n";
 
 // Hook configuration structure
 typedef struct {

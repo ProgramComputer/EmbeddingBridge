@@ -30,7 +30,7 @@
 #define LOG_ERROR_MEMORY     4
 
 static const char* LOG_USAGE =
-    "Usage: eb log [options] [file...]\n"
+    "Usage: embr log [options] [file...]\n"
     "\n"
     "Display embedding log for specified files\n"
     "\n"
@@ -42,13 +42,13 @@ static const char* LOG_USAGE =
     "\n"
     "Examples:\n"
     "  # Show log for a file\n"
-    "  eb log path/to/file.txt\n"
+    "  embr log path/to/file.txt\n"
     "\n"
     "  # Show log for a file filtered by model\n"
-    "  eb log --model openai-3 path/to/file.txt\n"
+    "  embr log --model openai-3 path/to/file.txt\n"
     "\n"
     "  # Show detailed log for the last 5 versions of a file\n"
-    "  eb log --verbose --limit 5 path/to/file.txt\n";
+    "  embr log --verbose --limit 5 path/to/file.txt\n";
 
 typedef struct {
     char hash[65];
@@ -86,9 +86,9 @@ static bool find_repo_root(char* path_out, size_t path_size) {
     strncpy(search_path, cwd, sizeof(search_path));
     
     while (1) {
-        /* Check if .eb directory exists in current path */
+        /* Check if .embr directory exists in current path */
         char eb_dir[PATH_MAX];
-        snprintf(eb_dir, sizeof(eb_dir), "%s/.eb", search_path);
+        snprintf(eb_dir, sizeof(eb_dir), "%s/.embr", search_path);
         
         if (directory_exists(eb_dir)) {
             strncpy(path_out, search_path, path_size);
@@ -117,7 +117,7 @@ static char* get_metadata(const char* root, const char* hash) {
     if (!root || !hash)
         return NULL;
     
-    snprintf(meta_path, sizeof(meta_path), "%s/.eb/objects/%s.meta", root, hash);
+    snprintf(meta_path, sizeof(meta_path), "%s/.embr/objects/%s.meta", root, hash);
     
     f = fopen(meta_path, "r");
     if (!f)
@@ -254,7 +254,7 @@ static int show_log(const char* file_path, const char* model_filter, int limit, 
     DEBUG_PRINT("show_log: repo_root=%s, rel_path=%s", repo_root, rel_path);
     
     /* Open log file */
-    snprintf(log_path, sizeof(log_path), "%s/.eb/log", repo_root);
+    snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
     
     f = fopen(log_path, "r");
     if (!f) {
@@ -263,7 +263,7 @@ static int show_log(const char* file_path, const char* model_filter, int limit, 
     }
     
     /* Read the index to determine current hashes */
-    snprintf(index_path, sizeof(index_path), "%s/.eb/index", repo_root);
+    snprintf(index_path, sizeof(index_path), "%s/.embr/index", repo_root);
     
     idx_file = fopen(index_path, "r");
     if (idx_file) {

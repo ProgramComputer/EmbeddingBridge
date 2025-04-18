@@ -112,7 +112,7 @@ static int local_connect(eb_transport_t *transport)
 		return EB_ERROR_MEMORY;
 	}
 	
-	sprintf(eb_dir, "%s/.eb", local->path);
+	sprintf(eb_dir, "%s/.embr", local->path);
 	
 	if (stat(eb_dir, &st) < 0 || !S_ISDIR(st.st_mode)) {
 		free(eb_dir);
@@ -176,12 +176,12 @@ static int local_send_data(eb_transport_t *transport, const void *data, size_t s
 		return EB_ERROR_NOT_CONNECTED;
 	
 	/* Create temporary file for writing */
-	snprintf(tmp_path, sizeof(tmp_path), "%s/.eb/tmp/send_XXXXXX", local->path);
+	snprintf(tmp_path, sizeof(tmp_path), "%s/.embr/tmp/send_XXXXXX", local->path);
 	int fd = mkstemp(tmp_path);
 	if (fd < 0) {
 		/* Check if tmp directory exists and create it if needed */
 		char tmp_dir[PATH_MAX];
-		snprintf(tmp_dir, sizeof(tmp_dir), "%s/.eb/tmp", local->path);
+		snprintf(tmp_dir, sizeof(tmp_dir), "%s/.embr/tmp", local->path);
 		
 		if (mkdir_p(tmp_dir) != 0) {
 			snprintf(transport->error_msg, sizeof(transport->error_msg),
@@ -221,7 +221,7 @@ static int local_send_data(eb_transport_t *transport, const void *data, size_t s
 		return EB_ERROR_MEMORY;
 	}
 	
-	sprintf(objects_dir, "%s/.eb/objects", local->path);
+	sprintf(objects_dir, "%s/.embr/objects", local->path);
 	
 	/* Create objects directory if it doesn't exist */
 	if (mkdir_p(objects_dir) != 0) {
@@ -274,7 +274,7 @@ static int local_receive_data(eb_transport_t *transport, void *buffer,
 		char *first_file = NULL;
 		time_t oldest_time = 0;
 		
-		snprintf(objects_dir, sizeof(objects_dir), "%s/.eb/objects", local->path);
+		snprintf(objects_dir, sizeof(objects_dir), "%s/.embr/objects", local->path);
 		
 		dir = opendir(objects_dir);
 		if (!dir) {
@@ -372,7 +372,7 @@ static int local_list_refs(eb_transport_t *transport, char ***refs, size_t *coun
 	*count = 0;
 	
 	/* Open refs directory */
-	snprintf(refs_dir, sizeof(refs_dir), "%s/.eb/refs", local->path);
+	snprintf(refs_dir, sizeof(refs_dir), "%s/.embr/refs", local->path);
 	
 	dir = opendir(refs_dir);
 	if (!dir) {

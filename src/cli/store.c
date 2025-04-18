@@ -39,7 +39,7 @@
 eb_status_t eb_git_get_metadata(const char* file_path, eb_git_metadata_t** meta);
 
 static const char* STORE_USAGE = 
-    "Usage: eb store [options] <embedding> <file>\n"
+    "Usage: embr store [options] <embedding> <file>\n"
     "\n"
     "Store embeddings for documents\n"
     "\n"
@@ -55,9 +55,9 @@ static const char* STORE_USAGE =
     "  <file>                Original document file\n"
     "\n"
     "Examples:\n"
-    "  eb store vector.bin -d 1536 doc.txt    # Store binary embedding\n"
-    "  eb store vector.npy doc.txt            # Store numpy embedding\n"
-    "  eb store -m openai-3 vector.npy doc.txt  # Specify model name\n";
+    "  embr store vector.bin -d 1536 doc.txt    # Store binary embedding\n"
+    "  embr store vector.npy doc.txt            # Store numpy embedding\n"
+    "  embr store -m openai-3 vector.npy doc.txt  # Specify model name\n";
 
 static bool validate_file(const char* file_path, bool quiet) {
     struct stat st;

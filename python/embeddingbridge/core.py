@@ -60,23 +60,23 @@ except ImportError as e:
     raise ImportError(f"Failed to load EmbeddingBridge library: {e}")
 
 # Define C function signatures based on the actual library
-_lib.eb_store_init.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
-_lib.eb_store_init.restype = ctypes.c_int
+_lib.embr_store_init.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)]
+_lib.embr_store_init.restype = ctypes.c_int
 
-_lib.eb_store_destroy.argtypes = [ctypes.c_void_p]
-_lib.eb_store_destroy.restype = ctypes.c_int
+_lib.embr_store_destroy.argtypes = [ctypes.c_void_p]
+_lib.embr_store_destroy.restype = ctypes.c_int
 
-_lib.eb_create_embedding.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)]
-_lib.eb_create_embedding.restype = ctypes.c_int
+_lib.embr_create_embedding.argtypes = [ctypes.POINTER(ctypes.c_float), ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)]
+_lib.embr_create_embedding.restype = ctypes.c_int
 
-_lib.eb_create_embedding_from_file.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_void_p)]
-_lib.eb_create_embedding_from_file.restype = ctypes.c_int
+_lib.embr_create_embedding_from_file.argtypes = [ctypes.c_char_p, ctypes.POINTER(ctypes.c_void_p)]
+_lib.embr_create_embedding_from_file.restype = ctypes.c_int
 
-_lib.eb_get_vector.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_void_p)]
-_lib.eb_get_vector.restype = ctypes.c_int
+_lib.embr_get_vector.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_void_p)]
+_lib.embr_get_vector.restype = ctypes.c_int
 
-_lib.eb_search_embeddings.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)]
-_lib.eb_search_embeddings.restype = ctypes.c_int
+_lib.embr_search_embeddings.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)]
+_lib.embr_search_embeddings.restype = ctypes.c_int
 
 # Define cmd_ function signatures correctly
 _lib.cmd_rollback.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
@@ -126,7 +126,7 @@ class EmbeddingStore:
         store_ptr = ctypes.c_void_p()
         config_ptr = ctypes.c_void_p()  # This should be properly initialized in a full implementation
         
-        result = _lib.eb_store_init(config_ptr, ctypes.byref(store_ptr))
+        result = _lib.embr_store_init(config_ptr, ctypes.byref(store_ptr))
         if result != 0:
             raise RuntimeError(f"Failed to initialize embedding store at {path}, error code: {result}")
         
@@ -139,7 +139,7 @@ class EmbeddingStore:
     def close(self):
         """Explicitly close the store"""
         if hasattr(self, '_store') and self._store:
-            result = _lib.eb_store_destroy(self._store)
+            result = _lib.embr_store_destroy(self._store)
             self._store = None
             return result == 0
         return False
@@ -156,7 +156,7 @@ class EmbeddingStore:
         file_path_bytes = file_path.encode('utf-8')
         embedding_ptr = ctypes.c_void_p()
         
-        result = _lib.eb_create_embedding_from_file(file_path_bytes, ctypes.byref(embedding_ptr))
+        result = _lib.embr_create_embedding_from_file(file_path_bytes, ctypes.byref(embedding_ptr))
         if result != 0:
             raise RuntimeError(f"Failed to create embedding from file: {file_path}, error code: {result}")
         
@@ -182,7 +182,7 @@ class EmbeddingStore:
         
         # Create embedding
         embedding_ptr = ctypes.c_void_p()
-        result = _lib.eb_create_embedding(vector_arr, len(vector_array), ctypes.byref(embedding_ptr))
+        result = _lib.embr_create_embedding(vector_arr, len(vector_array), ctypes.byref(embedding_ptr))
         if result != 0:
             raise RuntimeError(f"Failed to create embedding, error code: {result}")
         
@@ -216,7 +216,7 @@ class EmbeddingStore:
         metadata_ptr = ctypes.c_void_p()
         
         # Get vector
-        result = _lib.eb_get_vector(self._store, id_num, ctypes.byref(embedding_ptr), ctypes.byref(metadata_ptr))
+        result = _lib.embr_get_vector(self._store, id_num, ctypes.byref(embedding_ptr), ctypes.byref(metadata_ptr))
         
         if result != 0:
             return None
@@ -248,13 +248,13 @@ class EmbeddingStore:
         
         # Create embedding from query vector
         query_embedding_ptr = ctypes.c_void_p()
-        result = _lib.eb_create_embedding(vector_arr, len(vector_array), ctypes.byref(query_embedding_ptr))
+        result = _lib.embr_create_embedding(vector_arr, len(vector_array), ctypes.byref(query_embedding_ptr))
         if result != 0:
             raise RuntimeError(f"Failed to create query embedding, error code: {result}")
         
         # Search for similar embeddings
         results_ptr = ctypes.c_void_p()
-        result = _lib.eb_search_embeddings(self._store, query_embedding_ptr, top_k, ctypes.byref(results_ptr))
+        result = _lib.embr_search_embeddings(self._store, query_embedding_ptr, top_k, ctypes.byref(results_ptr))
         if result != 0:
             raise RuntimeError(f"Search failed, error code: {result}")
         

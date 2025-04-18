@@ -37,7 +37,7 @@ void cli_info(const char* format, ...);
 #define MAX_HASH_LEN 65
 
 static const char* ROLLBACK_USAGE =
-    "Usage: eb rollback [options] <hash> <source>\n"
+    "Usage: embr rollback [options] <hash> <source>\n"
     "\n"
     "Revert a source file's embedding to a previous hash.\n"
     "\n"
@@ -49,9 +49,9 @@ static const char* ROLLBACK_USAGE =
     "  --model <model>  Specify model to rollback (required for multi-model repos)\n"
     "\n"
     "Examples:\n"
-    "  eb rollback eb82a9c file.txt                # Rollback file.txt to hash eb82a9c\n"
-    "  eb rollback --model openai-3 eb82a9c file.txt  # Rollback OpenAI embedding to hash eb82a9c\n"
-    "  eb rollback --model voyage-2 4639f61 file.txt  # Rollback Voyage embedding to hash 4639f61\n";
+    "  embr rollback eb82a9c file.txt                # Rollback file.txt to hash eb82a9c\n"
+    "  embr rollback --model openai-3 eb82a9c file.txt  # Rollback OpenAI embedding to hash eb82a9c\n"
+    "  embr rollback --model voyage-2 4639f61 file.txt  # Rollback Voyage embedding to hash 4639f61\n";
 
 /* Find repository root directory */
 static eb_status_t find_repo_root(char* root_path, size_t size) 
@@ -66,7 +66,7 @@ static eb_status_t find_repo_root(char* root_path, size_t size)
         root_path[size - 1] = '\0';
         
         while (strlen(root_path) > 1) {
-                snprintf(check_path, sizeof(check_path), "%s/.eb", root_path);
+                snprintf(check_path, sizeof(check_path), "%s/.embr", root_path);
                 
                 if (access(check_path, F_OK) == 0)
                         return EB_SUCCESS;
@@ -84,7 +84,7 @@ static eb_status_t find_repo_root(char* root_path, size_t size)
 static bool hash_in_history(const char* repo_root, const char* source_file, const char* hash_to_rollback, const char* model) 
 {
         char log_path[PATH_MAX];
-        snprintf(log_path, sizeof(log_path), "%s/.eb/log", repo_root);
+        snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
         
         DEBUG_PRINT("Checking log file: %s\n", log_path);
         DEBUG_PRINT("Looking for hash: %s, source: %s, model: %s\n", 
@@ -173,7 +173,7 @@ static bool hash_in_history(const char* repo_root, const char* source_file, cons
 /* Helper function to update the index file for a specific source file and hash */
 static eb_status_t update_index_entry(const char* repo_root, const char* source_file, const char* hash_to_rollback, const char* model) {
         char index_path[PATH_MAX];
-        snprintf(index_path, sizeof(index_path), "%s/.eb/index", repo_root);
+        snprintf(index_path, sizeof(index_path), "%s/.embr/index", repo_root);
 
         DEBUG_PRINT("update_index_entry: repo_root=%s, source_file=%s, hash_to_rollback=%s, index_path=%s, model=%s\n",
                    repo_root, source_file, hash_to_rollback, index_path, model ? model : "(null)");
@@ -213,7 +213,7 @@ static eb_status_t update_index_entry(const char* repo_root, const char* source_
                         } else if (model) {
                                 // Same file but need to check if it's for a different model
                                 char meta_path[PATH_MAX];
-                                snprintf(meta_path, sizeof(meta_path), "%s/.eb/objects/%s.meta", repo_root, hash);
+                                snprintf(meta_path, sizeof(meta_path), "%s/.embr/objects/%s.meta", repo_root, hash);
                                 
                                 FILE* meta_fp = fopen(meta_path, "r");
                                 if (meta_fp) {
@@ -293,7 +293,7 @@ static eb_status_t update_index_entry(const char* repo_root, const char* source_
 static bool has_multiple_models_for_file(const char* repo_root, const char* file_path) 
 {
         char log_path[PATH_MAX];
-        snprintf(log_path, sizeof(log_path), "%s/.eb/log", repo_root);
+        snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
         
         FILE* fp = fopen(log_path, "r");
         if (!fp) return false;
@@ -372,7 +372,7 @@ static char* get_available_models_for_file(const char* repo_root, const char* fi
         model_list[0] = '\0';
         
         char log_path[PATH_MAX];
-        snprintf(log_path, sizeof(log_path), "%s/.eb/log", repo_root);
+        snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
         
         FILE* fp = fopen(log_path, "r");
         if (!fp) return model_list;
@@ -458,7 +458,7 @@ static const char* get_default_model_for_file(const char* repo_root, const char*
         default_model[0] = '\0';
         
         char log_path[PATH_MAX];
-        snprintf(log_path, sizeof(log_path), "%s/.eb/log", repo_root);
+        snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
         
         FILE* fp = fopen(log_path, "r");
         if (!fp) return NULL;
@@ -547,8 +547,8 @@ static eb_status_t update_head_file(const char* repo_root, const char* source_fi
         }
         
         /* Build paths */
-        snprintf(head_path, sizeof(head_path), "%s/.eb/HEAD", repo_root);
-        snprintf(temp_path, sizeof(temp_path), "%s/.eb/HEAD.tmp", repo_root);
+        snprintf(head_path, sizeof(head_path), "%s/.embr/HEAD", repo_root);
+        snprintf(temp_path, sizeof(temp_path), "%s/.embr/HEAD.tmp", repo_root);
         
         /* Open HEAD file for reading */
         head_fp = fopen(head_path, "r");
@@ -620,7 +620,7 @@ static eb_status_t get_head_hash(const char* repo_root, const char* model, char*
         FILE* head_fp;
         char line[MAX_LINE_LEN];
         
-        snprintf(head_path, sizeof(head_path), "%s/.eb/HEAD", repo_root);
+        snprintf(head_path, sizeof(head_path), "%s/.embr/HEAD", repo_root);
         
         head_fp = fopen(head_path, "r");
         if (!head_fp) {
@@ -658,11 +658,11 @@ static eb_status_t resolve_hash(
     size_t hash_size
 ) {
     char log_path[PATH_MAX];
-    snprintf(log_path, sizeof(log_path), "%s/.eb/log", repo_root);
+    snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
     DEBUG_PRINT("resolve_hash: Log path: %s\n", log_path);
     
     char index_path[PATH_MAX];
-    snprintf(index_path, sizeof(index_path), "%s/.eb/index", repo_root);
+    snprintf(index_path, sizeof(index_path), "%s/.embr/index", repo_root);
     
     char full_matched_hash[65] = {0};
     bool single_match_found = false;
@@ -853,7 +853,7 @@ int cmd_rollback(int argc, char** argv) {
             /* Update the model ref file to ensure consistency */
             if (model) {
                 char model_ref_path[PATH_MAX];
-                snprintf(model_ref_path, sizeof(model_ref_path), "%s/.eb/refs/models/%s", repo_root, model);
+                snprintf(model_ref_path, sizeof(model_ref_path), "%s/.embr/refs/models/%s", repo_root, model);
                 
                 DEBUG_PRINT("cmd_rollback: Updating model ref file: %s\n", model_ref_path);
                 

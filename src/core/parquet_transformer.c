@@ -119,7 +119,7 @@ static parquet_transformer_config_t* get_config(struct eb_transformer* transform
 
 /* 
  * Helper function to read metadata from a .meta file
- * Looks for .meta file in the .eb/objects directory with the given hash
+ * Looks for .meta file in the .embr/objects directory with the given hash
  */
 static eb_status_t read_metadata_from_meta_file(const char* hash_str, char** source, char** model, char** timestamp) {
     if (!hash_str || !source || !model || !timestamp) {
@@ -146,11 +146,11 @@ static eb_status_t read_metadata_from_meta_file(const char* hash_str, char** sou
     
     /* Construct path to the metadata file */
     char meta_path[PATH_MAX];
-    snprintf(meta_path, sizeof(meta_path), "%s/.eb/objects/%s.meta", repo_root, hash_str);
+    snprintf(meta_path, sizeof(meta_path), "%s/.embr/objects/%s.meta", repo_root, hash_str);
     
     /* Try alternative path if first doesn't exist */
     if (access(meta_path, F_OK) != 0) {
-        /* Try without .eb prefix for backward compatibility */
+        /* Try without .embr prefix for backward compatibility */
         snprintf(meta_path, sizeof(meta_path), "%s/objects/%s.meta", repo_root, hash_str);
         
         /* If still not found, check current directory */
@@ -1347,7 +1347,7 @@ static eb_status_t parquet_inverse_transform(struct eb_transformer* transformer,
         
         FILE* meta_file = fopen(meta_path, "w");
         if (!meta_file) {
-            /* Try in .eb/objects directory */
+            /* Try in .embr/objects directory */
             char repo_root[PATH_MAX] = {0};
             char* eb_dir = getenv("EB_DIR");
             if (eb_dir) {
@@ -1360,9 +1360,9 @@ static eb_status_t parquet_inverse_transform(struct eb_transformer* transformer,
                 }
             }
             
-            /* Create .eb/objects directory if it doesn't exist */
+            /* Create .embr/objects directory if it doesn't exist */
             char objects_dir[PATH_MAX];
-            snprintf(objects_dir, sizeof(objects_dir), "%s/.eb/objects", repo_root);
+            snprintf(objects_dir, sizeof(objects_dir), "%s/.embr/objects", repo_root);
             
             /* Try to create directory (ignore errors) */
             #if defined(_WIN32)
@@ -1371,7 +1371,7 @@ static eb_status_t parquet_inverse_transform(struct eb_transformer* transformer,
             mkdir(objects_dir, 0755);
             #endif
             
-            snprintf(meta_path, sizeof(meta_path), "%s/.eb/objects/%s.meta", repo_root, hash_str);
+            snprintf(meta_path, sizeof(meta_path), "%s/.embr/objects/%s.meta", repo_root, hash_str);
             meta_file = fopen(meta_path, "w");
             
             if (!meta_file) {

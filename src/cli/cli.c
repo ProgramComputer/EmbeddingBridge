@@ -115,7 +115,7 @@ const char* get_model(int argc, char** argv) {
         return NULL;
     }
     
-    snprintf(config_path, sizeof(config_path), "%s/.eb/config", cwd);
+    snprintf(config_path, sizeof(config_path), "%s/.embr/config", cwd);
     
     FILE* f = fopen(config_path, "r");
     if (!f) {

@@ -26,7 +26,7 @@
 
 /* Command usage strings */
 static const char* MERGE_USAGE = 
-    "Usage: eb merge <source-set> [<target-set>] [options]\n"
+    "Usage: embr merge <source-set> [<target-set>] [options]\n"
     "\n"
     "Merge embeddings from source set into target set.\n"
     "If target set is not specified, merges into the current set.\n"
@@ -41,9 +41,9 @@ static const char* MERGE_USAGE =
     "  weighted   For conflicts, apply weighted combination based on metadata\n"
     "\n"
     "Examples:\n"
-    "  eb merge feature-set                  # Merge feature-set into current set\n"
-    "  eb merge feature-set main             # Merge feature-set into main set\n"
-    "  eb merge feature-set --strategy=mean  # Use mean strategy for conflicts\n";
+    "  embr merge feature-set                  # Merge feature-set into current set\n"
+    "  embr merge feature-set main             # Merge feature-set into main set\n"
+    "  embr merge feature-set --strategy=mean  # Use mean strategy for conflicts\n";
 
 /* Main entry point for the merge command */
 int cmd_merge(int argc, char** argv)
@@ -66,13 +66,13 @@ static char* get_set_dir_path(void)
 	if (!eb_root)
 		return NULL;
 	
-	char* set_dir = malloc(strlen(eb_root) + strlen(".eb/sets") + 2);
+	char* set_dir = malloc(strlen(eb_root) + strlen(".embr/sets") + 2);
 	if (!set_dir) {
 		free(eb_root);
 		return NULL;
 	}
 	
-	sprintf(set_dir, "%s/%s", eb_root, ".eb/sets");
+	sprintf(set_dir, "%s/%s", eb_root, ".embr/sets");
 	free(eb_root);
 	return set_dir;
 }

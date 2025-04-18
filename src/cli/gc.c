@@ -17,7 +17,7 @@
 #include "../core/error.h"
 
 static const char* GC_USAGE = 
-    "usage: eb gc [options]\n"
+    "usage: embr gc [options]\n"
     "\n"
     "Clean up unnecessary files and optimize the local repository\n"
     "\n"
@@ -31,10 +31,10 @@ static const char* GC_USAGE =
     "  -h, --help             Show this help message\n"
     "\n"
     "Examples:\n"
-    "  eb gc                    # Run standard garbage collection\n"
-    "  eb gc --prune=now        # Remove all unreferenced objects\n"
-    "  eb gc --no-prune         # Don't remove any unreferenced objects\n"
-    "  eb gc -n                 # Show what would be removed without removing\n";
+    "  embr gc                    # Run standard garbage collection\n"
+    "  embr gc --prune=now        # Remove all unreferenced objects\n"
+    "  embr gc --no-prune         # Don't remove any unreferenced objects\n"
+    "  embr gc -n                 # Show what would be removed without removing\n";
 
 /* Default grace period for unreferenced objects (2 weeks) */
 #define DEFAULT_PRUNE_EXPIRE_SECONDS (14 * 24 * 60 * 60)

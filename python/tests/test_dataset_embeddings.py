@@ -57,7 +57,7 @@ class DatasetEmbeddingProcessor:
         os.makedirs(self.output_dir, exist_ok=True)
         
         # Create the EmbeddingBridge instance
-        self.eb = EmbeddingBridge()
+        self.embr = EmbeddingBridge()
         
         # Set up OpenAI API client
         self.client = openai.OpenAI(
@@ -76,22 +76,22 @@ class DatasetEmbeddingProcessor:
     
     def _init_repository(self):
         """Initialize the embedding bridge repository"""
-        # Check if .eb directory exists
-        if not os.path.exists(".eb"):
+        # Check if .embr directory exists
+        if not os.path.exists(".embr"):
             print("Initializing embedding bridge repository...")
-            init_result = self.eb.init()
+            init_result = self.embr.init()
             print(f"Init result: {init_result.stdout}")
     
     def _register_models(self):
         """Register embedding models"""
         # Check if models are already registered
-        model_list_result = self.eb.model_list()
+        model_list_result = self.embr.model_list()
         model_list = model_list_result.stdout
         
         # Register OpenAI model if not already registered
         if 'openai-3-small' not in model_list:
             print("Registering OpenAI model...")
-            openai_register = self.eb.model_register(
+            openai_register = self.embr.model_register(
                 name='openai-3-small',
                 dimensions=1536,
                 normalize=True,
@@ -102,7 +102,7 @@ class DatasetEmbeddingProcessor:
         # Register Voyage model if not already registered
         if 'voyage-2' not in model_list:
             print("Registering Voyage model...")
-            voyage_register = self.eb.model_register(
+            voyage_register = self.embr.model_register(
                 name='voyage-2',
                 dimensions=1024,
                 normalize=True,
@@ -209,7 +209,7 @@ class DatasetEmbeddingProcessor:
                 np.save(openai_path, openai_embedding)
                 
                 # Store OpenAI embedding
-                openai_store = self.eb.store(str(openai_path), str(doc_path))
+                openai_store = self.embr.store(str(openai_path), str(doc_path))
                 print(f"OpenAI store result: {openai_store.stdout}")
                 
                 # Get Voyage embedding (with rate limit considerations)
@@ -218,7 +218,7 @@ class DatasetEmbeddingProcessor:
                 np.save(voyage_path, voyage_embedding)
                 
                 # Store Voyage embedding
-                voyage_store = self.eb.store(str(voyage_path), str(doc_path))
+                voyage_store = self.embr.store(str(voyage_path), str(doc_path))
                 print(f"Voyage store result: {voyage_store.stdout}")
                 
                 # Add to processed documents list
@@ -259,12 +259,12 @@ class DatasetEmbeddingProcessor:
             
             # Check status
             print("\nChecking status...")
-            status_result = self.eb.status(str(doc['path']), verbose=True)
+            status_result = self.embr.status(str(doc['path']), verbose=True)
             print(f"Status: {status_result.stdout}")
             
             # Check log
             print("\nChecking log...")
-            log_result = self.eb.log(str(doc['path']))
+            log_result = self.embr.log(str(doc['path']))
             print(f"Log: {log_result.stdout}")
             
             # Extract hashes for diff
@@ -277,43 +277,43 @@ class DatasetEmbeddingProcessor:
             # Run diff if we have multiple hashes
             if len(hashes) >= 2:
                 print("\nRunning diff...")
-                diff_result = self.eb.diff(hashes[0][:8], hashes[1][:8])
+                diff_result = self.embr.diff(hashes[0][:8], hashes[1][:8])
                 print(f"Diff: {diff_result.stdout}")
             
             # Test rm with --model
             print("\nTesting rm with --model...")
-            rm_result = self.eb.rm(str(doc['path']), model='openai-3-small')
+            rm_result = self.embr.rm(str(doc['path']), model='openai-3-small')
             print(f"Remove model result: {rm_result.stdout}")
             if rm_result.stderr:
                 print(f"Remove stderr: {rm_result.stderr}")
             
             # Check status after removal
             print("\nChecking status after removal...")
-            status_after_remove = self.eb.status(str(doc['path']), verbose=True)
+            status_after_remove = self.embr.status(str(doc['path']), verbose=True)
             print(f"Status after removal: {status_after_remove.stdout}")
             
             # Add back
             print("\nAdding back openai embedding...")
-            add_back_result = self.eb.store(str(doc['openai_path']), str(doc['path']))
+            add_back_result = self.embr.store(str(doc['openai_path']), str(doc['path']))
             print(f"Add back result: {add_back_result.stdout}")
             
             # Test rm with --cached
             print("\nTesting rm with --cached...")
-            cached_rm_result = self.eb.rm(str(doc['path']), cached=True)
+            cached_rm_result = self.embr.rm(str(doc['path']), cached=True)
             print(f"Remove cached result: {cached_rm_result.stdout}")
             if cached_rm_result.stderr:
                 print(f"Remove cached stderr: {cached_rm_result.stderr}")
             
             # Re-add
             print("\nRe-adding embeddings...")
-            readd_openai = self.eb.store(str(doc['openai_path']), str(doc['path']))
+            readd_openai = self.embr.store(str(doc['openai_path']), str(doc['path']))
             print(f"Re-add OpenAI result: {readd_openai.stdout}")
             
-            readd_voyage = self.eb.store(str(doc['voyage_path']), str(doc['path']))
+            readd_voyage = self.embr.store(str(doc['voyage_path']), str(doc['path']))
             print(f"Re-add Voyage result: {readd_voyage.stdout}")
             
             # Test rollback if we have multiple hashes
-            new_log_result = self.eb.log(str(doc['path']))
+            new_log_result = self.embr.log(str(doc['path']))
             new_hashes = []
             for line in new_log_result.stdout.strip().split('\n'):
                 if 'commit' in line:
@@ -322,32 +322,32 @@ class DatasetEmbeddingProcessor:
             
             if len(new_hashes) >= 2:
                 print("\nTesting rollback...")
-                rollback_result = self.eb.rollback(new_hashes[1], str(doc['path']))
+                rollback_result = self.embr.rollback(new_hashes[1], str(doc['path']))
                 print(f"Rollback result: {rollback_result.stdout}")
                 if rollback_result.stderr:
                     print(f"Rollback stderr: {rollback_result.stderr}")
                 
                 # Check status after rollback
                 print("\nChecking status after rollback...")
-                rollback_status = self.eb.status(str(doc['path']), verbose=True)
+                rollback_status = self.embr.status(str(doc['path']), verbose=True)
                 print(f"Status after rollback: {rollback_status.stdout}")
         
         # Test eb set
         print("\nTesting eb set...")
-        set_create_result = self.eb.set_create('test-set')
+        set_create_result = self.embr.set_create('test-set')
         print(f"Set create result: {set_create_result.stdout}")
         if set_create_result.stderr:
             print(f"Set create stderr: {set_create_result.stderr}")
         
-        set_list_result = self.eb.set_list()
+        set_list_result = self.embr.set_list()
         print(f"Set list result: {set_list_result.stdout}")
         
-        set_switch_result = self.eb.set_switch('test-set')
+        set_switch_result = self.embr.set_switch('test-set')
         print(f"Set switch result: {set_switch_result.stdout}")
         if set_switch_result.stderr:
             print(f"Set switch stderr: {set_switch_result.stderr}")
         
-        set_status_result = self.eb.set_status()
+        set_status_result = self.embr.set_status()
         print(f"Set status result: {set_status_result.stdout}")
         
         print("\nTest sequence completed successfully!")

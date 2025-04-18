@@ -98,7 +98,7 @@ typedef struct eb_stored_vector {
 } eb_stored_vector_t;
 
 typedef struct {
-    char* root_path;        // Path to .eb directory
+    char* root_path;        // Path to .embr directory
     bool compression;       // Whether to compress objects
     bool deduplication;    // Whether to deduplicate vectors
     char* default_model;   // Default model identifier

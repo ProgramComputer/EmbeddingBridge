@@ -57,7 +57,7 @@ static float euclidean_distance(const float* vec1, const float* vec2, size_t dim
 static float euclidean_similarity(const float* vec1, const float* vec2, size_t dims);
 
 static const char* DIFF_USAGE = 
-    "Usage: eb diff [options] <input1> <input2>\n"
+    "Usage: embr diff [options] <input1> <input2>\n"
     "\n"
     "Compare two embeddings and show their similarity\n"
     "\n"
@@ -70,14 +70,14 @@ static const char* DIFF_USAGE =
     "  --model <model>               Shorthand to use the same model for both inputs\n"
     "\n"
     "Examples:\n"
-    "  eb diff 7d39a15 9f3e8c2               # Compare using short hashes (7 chars)\n"
-    "  eb diff 7d39a15cb74e02f1a0a4e5842b1b1d5c3e2a98765434abcdef 9f3e8c2a3b4c5d6e\n" 
+    "  embr diff 7d39a15 9f3e8c2               # Compare using short hashes (7 chars)\n"
+    "  embr diff 7d39a15cb74e02f1a0a4e5842b1b1d5c3e2a98765434abcdef 9f3e8c2a3b4c5d6e\n" 
     "                                       # Compare using full or partial hashes\n"
-    "  eb diff file1.npy file2.npy           # Compare two .npy files\n"
-    "  eb diff file1.bin file2.bin           # Compare two binary files\n"
-    "  eb diff doc1.txt doc2.txt             # Compare source files (looks for associated files)\n"
-    "  eb diff --model voyage-2 file.txt      # Compare latest vs. previous for voyage-2\n"
-    "  eb diff --models openai-3,voyage-2 file1.txt file2.txt\n"
+    "  embr diff file1.npy file2.npy           # Compare two .npy files\n"
+    "  embr diff file1.bin file2.bin           # Compare two binary files\n"
+    "  embr diff doc1.txt doc2.txt             # Compare source files (looks for associated files)\n"
+    "  embr diff --model voyage-2 file.txt      # Compare latest vs. previous for voyage-2\n"
+    "  embr diff --models openai-3,voyage-2 file1.txt file2.txt\n"
     "                                       # Compare file1 with openai-3 and file2 with voyage-2\n";
 
 /* Calculate cosine similarity between two float vectors */
@@ -541,7 +541,7 @@ static float* load_stored_embedding(const char* hash, size_t *dims)
             // Even if the store API fails, we can try to read and decompress the file directly
             // Construct path to raw file
             char raw_path[PATH_MAX];
-            snprintf(raw_path, sizeof(raw_path), "%s/.eb/objects/%s.raw", repo_root, hash);
+            snprintf(raw_path, sizeof(raw_path), "%s/.embr/objects/%s.raw", repo_root, hash);
             
             // Try to read and decompress the file directly
             FILE *f = fopen(raw_path, "rb");
@@ -655,7 +655,7 @@ static float* load_stored_embedding(const char* hash, size_t *dims)
     // Original implementation as fallback
     // Construct path to raw file
     char raw_path[PATH_MAX];
-    snprintf(raw_path, sizeof(raw_path), "%s/.eb/objects/%s.raw", repo_root, hash);
+    snprintf(raw_path, sizeof(raw_path), "%s/.embr/objects/%s.raw", repo_root, hash);
     
     // Try loading as npy file first
     npy_array_t *arr = npy_array_load(raw_path);
@@ -884,7 +884,7 @@ static bool is_hex_string(const char* str) {
 /* Check if a file has embeddings from multiple models */
 static bool has_multiple_models(const char* repo_root, const char* file_path) {
     char log_path[PATH_MAX];
-    snprintf(log_path, sizeof(log_path), "%s/.eb/log", repo_root);
+    snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
     
     FILE* fp = fopen(log_path, "r");
     if (!fp) return false;
@@ -962,7 +962,7 @@ static char* get_available_models(const char* repo_root, const char* file_path) 
     model_list[0] = '\0';
     
     char log_path[PATH_MAX];
-    snprintf(log_path, sizeof(log_path), "%s/.eb/log", repo_root);
+    snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
     
     FILE* fp = fopen(log_path, "r");
     if (!fp) return model_list;
@@ -1047,7 +1047,7 @@ static const char* get_default_model_for_file(const char* repo_root, const char*
     default_model[0] = '\0';
     
     char log_path[PATH_MAX];
-    snprintf(log_path, sizeof(log_path), "%s/.eb/log", repo_root);
+    snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
     
     FILE* fp = fopen(log_path, "r");
     if (!fp) return NULL;
@@ -1128,7 +1128,7 @@ static char* get_default_model() {
     
     // Try to read config file
     char config_path[PATH_MAX];
-    snprintf(config_path, sizeof(config_path), "%s/.eb/config", repo_root);
+    snprintf(config_path, sizeof(config_path), "%s/.embr/config", repo_root);
     
     FILE* fp = fopen(config_path, "r");
     if (!fp) {

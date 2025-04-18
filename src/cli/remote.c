@@ -32,7 +32,7 @@ typedef struct {
 } remote_context_t;
 
 static void print_usage(void) {
-    printf("Usage: eb remote <command> [options] [args]\n\n");
+    printf("Usage: embr remote <command> [options] [args]\n\n");
     printf("Commands:\n");
     printf("  add <name> <url>     Add a new remote repository\n");
     printf("  remove <name>        Remove a remote repository\n");
@@ -190,7 +190,7 @@ int cmd_remote(int argc, char** argv) {
 static int handle_add_command(int argc, char **argv, const remote_context_t *ctx) {
     if (argc < 2) {
         fprintf(stderr, "Error: Missing remote name and URL\n");
-        printf("Usage: eb remote add <name> <url> [options]\n");
+        printf("Usage: embr remote add <name> <url> [options]\n");
         return 1;
     }
 
@@ -216,7 +216,7 @@ static int handle_add_command(int argc, char **argv, const remote_context_t *ctx
 static int handle_remove_command(int argc, char **argv) {
     if (argc < 1) {
         fprintf(stderr, "Error: Missing remote name\n");
-        printf("Usage: eb remote remove <name>\n");
+        printf("Usage: embr remote remove <name>\n");
         return 1;
     }
 
@@ -249,7 +249,7 @@ static int handle_list_command(int argc, char **argv) {
     }
 
     if (count == 0) {
-        printf("No remotes configured. Add one with 'eb remote add <name> <url>'\n");
+        printf("No remotes configured. Add one with 'embr remote add <name> <url>'\n");
     } else {
         printf("Configured remotes:\n");
         for (int i = 0; i < count; i++) {
@@ -283,7 +283,7 @@ static int handle_list_command(int argc, char **argv) {
 static int handle_push_command(int argc, char **argv, const remote_context_t *ctx) {
     if (argc < 1) {
         fprintf(stderr, "Error: Missing remote name\n");
-        printf("Usage: eb remote push <n> [options]\n");
+        printf("Usage: embr remote push <n> [options]\n");
         return 1;
     }
 
@@ -295,7 +295,7 @@ static int handle_push_command(int argc, char **argv, const remote_context_t *ct
         if (strncmp(argv[i], "--set=", 6) == 0) {
             set_name = argv[i] + 6;
         } else if (strcmp(argv[i], "--help") == 0) {
-            printf("Usage: eb remote push <n> [options]\n");
+            printf("Usage: embr remote push <n> [options]\n");
             printf("\nPushes the current set to a remote repository.\n");
             printf("\nOptions:\n");
             printf("  --set=<n>  Specify set name (defaults to current active set)\n");
@@ -305,8 +305,8 @@ static int handle_push_command(int argc, char **argv, const remote_context_t *ct
 
     /* If no set specified, use current active set */
     if (set_name == NULL) {
-        /* Read current active set from .eb/HEAD */
-        FILE *head_file = fopen(".eb/HEAD", "r");
+        /* Read current active set from .embr/HEAD */
+        FILE *head_file = fopen(".embr/HEAD", "r");
         if (head_file) {
             char current_set[64] = {0};
             if (fgets(current_set, sizeof(current_set), head_file)) {
@@ -337,7 +337,7 @@ static int handle_push_command(int argc, char **argv, const remote_context_t *ct
     printf("Pushing set '%s' to remote '%s'...\n", set_name, name);
     
     /* Read the index file to get the list of embeddings */
-    FILE *index_file = fopen(".eb/index", "r");
+    FILE *index_file = fopen(".embr/index", "r");
     if (!index_file) {
         fprintf(stderr, "Error: Could not open index file\n");
         return 1;
@@ -382,7 +382,7 @@ static int handle_push_command(int argc, char **argv, const remote_context_t *ct
         
         /* Check if the raw file exists */
         char raw_path[1024];
-        snprintf(raw_path, sizeof(raw_path), ".eb/objects/%s.raw", hash);
+        snprintf(raw_path, sizeof(raw_path), ".embr/objects/%s.raw", hash);
         
         FILE *raw_file = fopen(raw_path, "rb");
         if (!raw_file) {
@@ -441,7 +441,7 @@ static int handle_push_command(int argc, char **argv, const remote_context_t *ct
 static int handle_pull_command(int argc, char **argv, const remote_context_t *ctx) {
     if (argc < 1) {
         fprintf(stderr, "Error: Missing remote name\n");
-        printf("Usage: eb remote pull <name> [options]\n");
+        printf("Usage: embr remote pull <name> [options]\n");
         return 1;
     }
 
@@ -456,7 +456,7 @@ static int handle_pull_command(int argc, char **argv, const remote_context_t *ct
         } else if (strcmp(argv[i], "--delta") == 0) {
             delta_update = true;
         } else if (strcmp(argv[i], "--help") == 0) {
-            printf("Usage: eb remote pull <name> [options]\n");
+            printf("Usage: embr remote pull <name> [options]\n");
             printf("\nPulls from a remote repository into the current set.\n");
             printf("\nOptions:\n");
             printf("  --set=<name>  Specify set name (defaults to current active set)\n");
@@ -467,8 +467,8 @@ static int handle_pull_command(int argc, char **argv, const remote_context_t *ct
     
     /* If no set specified, use current active set */
     if (set_name == NULL) {
-        /* Read current active set from .eb/HEAD */
-        FILE *head_file = fopen(".eb/HEAD", "r");
+        /* Read current active set from .embr/HEAD */
+        FILE *head_file = fopen(".embr/HEAD", "r");
         if (head_file) {
             char current_set[64] = {0};
             if (fgets(current_set, sizeof(current_set), head_file)) {

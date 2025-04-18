@@ -9,7 +9,7 @@
 #include "../core/path_utils.h"
 
 static const char* INIT_USAGE = 
-    "Usage: eb init [options]\n"
+    "Usage: embr init [options]\n"
     "\n"
     "Initialize embedding storage in current directory\n"
     "\n"
@@ -20,13 +20,13 @@ static const char* INIT_USAGE =
     "\n"
     "Examples:\n"
     "  # Initialize with defaults\n"
-    "  eb init\n"
+    "  embr init\n"
     "\n"
     "  # Initialize with specific model\n"
-    "  eb init --model openai-3\n"
+    "  embr init --model openai-3\n"
     "\n"
     "  # Reinitialize existing repository\n"
-    "  eb init --force\n";
+    "  embr init --force\n";
 
 // Default configuration
 static const char* DEFAULT_CONFIG = "# EmbeddingBridge config file\n\n"
@@ -211,20 +211,20 @@ static int write_file(const char* path, const char* content) {
 static eb_status_t create_eb_structure(const char* root, const char* model __attribute__((unused))) {
     char path[1024];
     
-    // Create .eb directory
-    if (create_directory(root, ".eb") != 0) {
-        fprintf(stderr, "error: could not create .eb directory\n");
+    // Create .embr directory
+    if (create_directory(root, ".embr") != 0) {
+        fprintf(stderr, "error: could not create .embr directory\n");
         return 1;
     }
     
     // Create subdirectories
     const char* dirs[] = {
-        ".eb/objects",
-        ".eb/objects/temp",
-        ".eb/metadata",
-        ".eb/metadata/files",
-        ".eb/metadata/models",
-        ".eb/metadata/versions"
+        ".embr/objects",
+        ".embr/objects/temp",
+        ".embr/metadata",
+        ".embr/metadata/files",
+        ".embr/metadata/models",
+        ".embr/metadata/versions"
     };
     
     for (size_t i = 0; i < sizeof(dirs) / sizeof(dirs[0]); i++) {
@@ -235,28 +235,28 @@ static eb_status_t create_eb_structure(const char* root, const char* model __att
     }
     
     // Create config file
-    snprintf(path, sizeof(path), "%s/.eb/config", root);
+    snprintf(path, sizeof(path), "%s/.embr/config", root);
     if (write_file(path, DEFAULT_CONFIG) != 0) {
         fprintf(stderr, "error: could not create config file\n");
         return 1;
     }
     
     // Create HEAD file
-    snprintf(path, sizeof(path), "%s/.eb/HEAD", root);
+    snprintf(path, sizeof(path), "%s/.embr/HEAD", root);
     if (write_file(path, DEFAULT_HEAD) != 0) {
         fprintf(stderr, "error: could not create HEAD file\n");
         return 1;
     }
 
     // Create empty history file
-    snprintf(path, sizeof(path), "%s/.eb/log", root);
+    snprintf(path, sizeof(path), "%s/.embr/log", root);
     if (write_file(path, "") != 0) {
         fprintf(stderr, "error: could not create history file\n");
         return 1;
     }
     
     // Create empty index file
-    snprintf(path, sizeof(path), "%s/.eb/index", root);
+    snprintf(path, sizeof(path), "%s/.embr/index", root);
     if (write_file(path, "") != 0) {
         fprintf(stderr, "error: could not create index file\n");
         return 1;
@@ -277,7 +277,7 @@ static int is_eb_initialized(const char* path) {
     char eb_path[1024];
     struct stat st;
     
-    snprintf(eb_path, sizeof(eb_path), "%s/.eb", path);
+    snprintf(eb_path, sizeof(eb_path), "%s/.embr", path);
     return stat(eb_path, &st) == 0 && S_ISDIR(st.st_mode);
 }
 
@@ -362,12 +362,12 @@ int init_main(int argc __attribute__((unused)), char* argv[] __attribute__((unus
         return 1;
     }
 
-    // Create .eb directory structure
+    // Create .embr directory structure
     char eb_path[PATH_MAX];
-    snprintf(eb_path, PATH_MAX, "%s/.eb", current_dir);
+    snprintf(eb_path, PATH_MAX, "%s/.embr", current_dir);
     
     if (mkdir(eb_path, 0755) != 0) {
-        perror("Error creating .eb directory");
+        perror("Error creating .embr directory");
         return 1;
     }
 
@@ -382,7 +382,7 @@ int init_main(int argc __attribute__((unused)), char* argv[] __attribute__((unus
         }
     }
 
-    printf("Initialized empty eb repository in %s/.eb\n", current_dir);
+    printf("Initialized empty eb repository in %s/.embr\n", current_dir);
     return 0;
 }
 
@@ -425,9 +425,9 @@ int cmd_init(int argc, char** argv) {
     
     // Success message
     if (has_option(argc, argv, "-f") || has_option(argc, argv, "--force")) {
-        printf("Reinitialized existing embedding repository in %s/.eb\n", cwd);
+        printf("Reinitialized existing embedding repository in %s/.embr\n", cwd);
     } else {
-        printf("Initialized empty embedding repository in %s/.eb\n", cwd);
+        printf("Initialized empty embedding repository in %s/.embr\n", cwd);
     }
     
     // Hint about setting up a model if none was specified

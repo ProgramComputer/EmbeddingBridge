@@ -267,7 +267,7 @@ install: all
 	install -d $(DESTDIR)$(BINDIR)
 	install -d $(DESTDIR)$(LIBDIR)
 	install -d $(DESTDIR)$(INCLUDEDIR)
-	install -m 755 $(TARGET) $(DESTDIR)$(BINDIR)/eb
+	install -m 755 $(TARGET) $(DESTDIR)$(BINDIR)/embr
 	install -m 644 $(LIB_TARGET) $(DESTDIR)$(LIBDIR)
 	install -m 644 $(SRC_DIR)/*.h $(DESTDIR)$(INCLUDEDIR)
 	@echo "Installation complete."
@@ -277,7 +277,7 @@ install: all
 	fi
 
 uninstall:
-	rm -f $(DESTDIR)$(BINDIR)/eb
+	rm -f $(DESTDIR)$(BINDIR)/embr
 	rm -f $(DESTDIR)$(LIBDIR)/libembedding_bridge.so
 	rm -rf $(DESTDIR)$(INCLUDEDIR)
 	@echo "Uninstallation complete."

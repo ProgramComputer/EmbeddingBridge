@@ -30,7 +30,7 @@ class TestEmbeddingBridgeSequence(unittest.TestCase):
         self.test_dir = Path(self.temp_dir.name)
         
         # Create an EmbeddingBridge instance with the temp dir as working dir
-        self.eb = EmbeddingBridge(working_dir=str(self.test_dir))
+        self.embr = EmbeddingBridge(working_dir=str(self.test_dir))
         
         # Create test files directory
         self.test_files_dir = self.test_dir / 'test_files'
@@ -68,15 +68,15 @@ class TestEmbeddingBridgeSequence(unittest.TestCase):
     def test_complete_workflow_sequence(self):
         """Run through the complete workflow sequence"""
         # Step 1: Initialize embedding bridge repository
-        init_result = self.eb.init()
+        init_result = self.embr.init()
         print(f"Init output: {init_result.stdout}")
         
-        # Verify .eb directory was created
-        eb_dir = self.test_dir / '.eb'
-        self.assertTrue(eb_dir.exists(), "eb init should create .eb directory")
+        # Verify .embr directory was created
+        eb_dir = self.test_dir / '.embr'
+        self.assertTrue(eb_dir.exists(), "eb init should create .embr directory")
         
         # Step 2: Register embedding models
-        openai_register = self.eb.model_register(
+        openai_register = self.embr.model_register(
             name='openai-3-small',
             dimensions=1536,
             normalize=True,
@@ -84,7 +84,7 @@ class TestEmbeddingBridgeSequence(unittest.TestCase):
         )
         print(f"OpenAI model register output: {openai_register.stdout}")
         
-        voyage_register = self.eb.model_register(
+        voyage_register = self.embr.model_register(
             name='voyage-2',
             dimensions=1024,
             normalize=True,
@@ -93,17 +93,17 @@ class TestEmbeddingBridgeSequence(unittest.TestCase):
         print(f"Voyage model register output: {voyage_register.stdout}")
         
         # Verify models were registered - use visual checks only as output may not be captured properly
-        model_list = self.eb.model_list()
+        model_list = self.embr.model_list()
         print(f"Model list output: {model_list.stdout}")
         
         # Instead of asserting on stdout, check the return code
         self.assertEqual(model_list.returncode, 0, "model list command should succeed")
         
         # We'll continue with the test, but we won't rely on assertIn for stdout
-        # Instead, we'll check .eb directory for evidence of the operations
+        # Instead, we'll check .embr directory for evidence of the operations
         
         # Step 3: Store original document embeddings
-        openai_store = self.eb.store(str(self.openai_embed_path), str(self.original_doc_path))
+        openai_store = self.embr.store(str(self.openai_embed_path), str(self.original_doc_path))
         print(f"OpenAI embedding store output: {openai_store.stdout}")
         
         # Extract and save the first hash for later use in rollback
@@ -112,11 +112,11 @@ class TestEmbeddingBridgeSequence(unittest.TestCase):
             self.first_hash = hash_line.split("hash:")[1].strip()
             print(f"Extracted first hash for later use: {self.first_hash}")
         
-        voyage_store = self.eb.store(str(self.voyage_embed_path), str(self.original_doc_path))
+        voyage_store = self.embr.store(str(self.voyage_embed_path), str(self.original_doc_path))
         print(f"Voyage embedding store output: {voyage_store.stdout}")
         
         # Verify embeddings were stored
-        status_result = self.eb.status(str(self.original_doc_path), verbose=True)
+        status_result = self.embr.status(str(self.original_doc_path), verbose=True)
         print(f"Status output: {status_result.stdout}")
         
         # We need to get the hash from the status output, but if we can't capture it,
@@ -124,70 +124,70 @@ class TestEmbeddingBridgeSequence(unittest.TestCase):
         unmodified_hash = "placeholder_hash"
         
         # Step 4: Store modified document embeddings
-        openai_modified_store = self.eb.store(str(self.openai_modified_path), str(self.original_doc_path))
+        openai_modified_store = self.embr.store(str(self.openai_modified_path), str(self.original_doc_path))
         print(f"Modified OpenAI embedding store output: {openai_modified_store.stdout}")
         
-        voyage_modified_store = self.eb.store(str(self.voyage_modified_path), str(self.original_doc_path))
+        voyage_modified_store = self.embr.store(str(self.voyage_modified_path), str(self.original_doc_path))
         print(f"Modified Voyage embedding store output: {voyage_modified_store.stdout}")
         
         # Get hash of modified embeddings
-        modified_status = self.eb.status(str(self.original_doc_path), verbose=True)
+        modified_status = self.embr.status(str(self.original_doc_path), verbose=True)
         print(f"Modified status output: {modified_status.stdout}")
         
         # Again, use a placeholder hash for testing
         modified_hash = "different_placeholder_hash"
         
         # Step 5: Check log to verify both versions are recorded
-        log_result = self.eb.log(str(self.original_doc_path))
+        log_result = self.embr.log(str(self.original_doc_path))
         print(f"Log output: {log_result.stdout}")
         
         # Step 6: Run diff between modified and unmodified versions
         # We'll use placeholder hashes if we couldn't get the real ones
-        diff_result = self.eb.diff(modified_hash[:8], unmodified_hash[:8])
+        diff_result = self.embr.diff(modified_hash[:8], unmodified_hash[:8])
         print(f"Diff output: {diff_result.stdout}")
         
         # Step 7: Test rm command with --model option
-        rm_result = self.eb.rm(str(self.original_doc_path), model='openai-3-small')
+        rm_result = self.embr.rm(str(self.original_doc_path), model='openai-3-small')
         print(f"Remove model output: {rm_result.stdout}")
         if rm_result.stderr:
             print(f"Remove model stderr: {rm_result.stderr}")
         
         # Verify openai model was removed
-        rm_status = self.eb.status(str(self.original_doc_path), verbose=True)
+        rm_status = self.embr.status(str(self.original_doc_path), verbose=True)
         print(f"Status after removal output: {rm_status.stdout}")
         
         # Step 8: Re-add the openai embedding
-        readd_result = self.eb.store(str(self.openai_embed_path), str(self.original_doc_path))
+        readd_result = self.embr.store(str(self.openai_embed_path), str(self.original_doc_path))
         print(f"Re-add OpenAI embedding output: {readd_result.stdout}")
         
         # Verify it was added back
-        readd_status = self.eb.status(str(self.original_doc_path), verbose=True)
+        readd_status = self.embr.status(str(self.original_doc_path), verbose=True)
         print(f"Status after re-adding output: {readd_status.stdout}")
         
         # Step 9: Test rm with --cached option
-        cached_rm_result = self.eb.rm(str(self.original_doc_path), cached=True)
+        cached_rm_result = self.embr.rm(str(self.original_doc_path), cached=True)
         print(f"Remove cached output: {cached_rm_result.stdout}")
         if cached_rm_result.stderr:
             print(f"Remove cached stderr: {cached_rm_result.stderr}")
         
         # Verify file is no longer tracked
-        cached_status = self.eb.status(str(self.original_doc_path))
+        cached_status = self.embr.status(str(self.original_doc_path))
         print(f"Status after cached removal output: {cached_status.stdout}")
         
         # Step 10: Re-add from cached object
-        readd_openai = self.eb.store(str(self.openai_embed_path), str(self.original_doc_path))
+        readd_openai = self.embr.store(str(self.openai_embed_path), str(self.original_doc_path))
         print(f"Re-add openai from cached output: {readd_openai.stdout}")
         
-        readd_voyage = self.eb.store(str(self.voyage_embed_path), str(self.original_doc_path))
+        readd_voyage = self.embr.store(str(self.voyage_embed_path), str(self.original_doc_path))
         print(f"Re-add voyage from cached output: {readd_voyage.stdout}")
         
         # Verify re-added
-        readded_status = self.eb.status(str(self.original_doc_path), verbose=True)
+        readded_status = self.embr.status(str(self.original_doc_path), verbose=True)
         print(f"Status after re-adding from cached output: {readded_status.stdout}")
         
         # Step 11: Test rollback
         # Get a proper hash from the log output to use for rollback (a previous version)
-        log_output = self.eb.log(str(self.original_doc_path))
+        log_output = self.embr.log(str(self.original_doc_path))
         print(f"Log output for rollback: {log_output.stdout}")
         
         # Extract a previous version hash (not the current one which is marked with *)
@@ -220,34 +220,34 @@ class TestEmbeddingBridgeSequence(unittest.TestCase):
             print("No previous version hash found, using placeholder")
         
         # Rollback to an earlier version with the extracted hash
-        rollback_result = self.eb.rollback(rollback_hash, str(self.original_doc_path))
+        rollback_result = self.embr.rollback(rollback_hash, str(self.original_doc_path))
         print(f"Rollback output: {rollback_result.stdout}")
         if rollback_result.stderr:
             print(f"Rollback stderr: {rollback_result.stderr}")
             
         # Verify the rollback
-        rollback_status = self.eb.status(str(self.original_doc_path), verbose=True)
+        rollback_status = self.embr.status(str(self.original_doc_path), verbose=True)
         print(f"Status after rollback output: {rollback_status.stdout}")
         
         # Step 12: Test eb set
         # Create a new set
-        set_create_result = self.eb.set_create('test-set')
+        set_create_result = self.embr.set_create('test-set')
         print(f"Set create output: {set_create_result.stdout}")
         if set_create_result.stderr:
             print(f"Set create stderr: {set_create_result.stderr}")
         
         # List sets
-        set_list_result = self.eb.set_list()
+        set_list_result = self.embr.set_list()
         print(f"Set list output: {set_list_result.stdout}")
         
         # Switch to the new set
-        set_switch_result = self.eb.set_switch('test-set')
+        set_switch_result = self.embr.set_switch('test-set')
         print(f"Set switch output: {set_switch_result.stdout}")
         if set_switch_result.stderr:
             print(f"Set switch stderr: {set_switch_result.stderr}")
         
         # Check set status
-        set_status_result = self.eb.set_status()
+        set_status_result = self.embr.set_status()
         print(f"Set status output: {set_status_result.stdout}")
         
         print("Complete workflow sequence test passed successfully!")

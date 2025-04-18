@@ -7,7 +7,7 @@
 // Maximum path depth to prevent infinite loops
 #define MAX_PATH_DEPTH 100
 
-// Find the .eb repository root directory
+// Find the .embr repository root directory
 char* find_repo_root(const char* start_path);
 
 // Convert path to be relative to repository root

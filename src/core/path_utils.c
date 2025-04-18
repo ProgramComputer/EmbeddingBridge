@@ -31,19 +31,19 @@ char* find_repo_root(const char* start_path) {
     int depth = 0;
     while (depth < MAX_PATH_DEPTH) {
         char eb_path[PATH_MAX];
-        snprintf(eb_path, PATH_MAX, "%s/.eb", current_path);
-        DEBUG_PRINT("Checking for .eb at: %s", eb_path);
+        snprintf(eb_path, PATH_MAX, "%s/.embr", current_path);
+        DEBUG_PRINT("Checking for .embr at: %s", eb_path);
         
         struct stat st;
         if (stat(eb_path, &st) == 0 && S_ISDIR(st.st_mode)) {
-            DEBUG_PRINT("Found .eb repository at: %s", current_path);
+            DEBUG_PRINT("Found .embr repository at: %s", current_path);
             return strdup(current_path);
         }
 
         // Move up one directory
         char *last_slash = strrchr(current_path, '/');
         if (!last_slash || last_slash == current_path) {
-            DEBUG_PRINT("Reached root directory without finding .eb");
+            DEBUG_PRINT("Reached root directory without finding .embr");
             break;
         }
         *last_slash = '\0';
@@ -51,7 +51,7 @@ char* find_repo_root(const char* start_path) {
         DEBUG_PRINT("Moving up to parent: %s", current_path);
     }
 
-    DEBUG_PRINT("No .eb repository found in parent directories");
+    DEBUG_PRINT("No .embr repository found in parent directories");
     return NULL;
 }
 

@@ -115,13 +115,13 @@ static int operation_count = 0;
 static pthread_mutex_t operation_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* Temporary reference file path */
-#define TEMP_REF_FILE ".eb/REMOTE_TEMP"
+#define TEMP_REF_FILE ".embr/REMOTE_TEMP"
 /* Lock file to prevent concurrent operations */
-#define LOCK_FILE ".eb/REMOTE_LOCK"
+#define LOCK_FILE ".embr/REMOTE_LOCK"
 /* Commit log for durability */
-#define COMMIT_LOG ".eb/REMOTE_JOURNAL"
+#define COMMIT_LOG ".embr/REMOTE_JOURNAL"
 /* Completed reference path */
-#define REF_FILE ".eb/REMOTE_HEAD"
+#define REF_FILE ".embr/REMOTE_HEAD"
 
 /* Lock state for atomic operations */
 static bool atomic_lock_held = false;
@@ -159,14 +159,14 @@ eb_status_t eb_remote_init(void) {
     recover_transactions();
     
     /* Load saved operation states */
-    status = load_operation_states(".eb/operations.state");
+    status = load_operation_states(".embr/operations.state");
     if (status != EB_SUCCESS) {
         DEBUG_WARN("Failed to load operation states: %d", status);
         /* Non-fatal error, continue */
     }
     
     /* Load remote configuration */
-    status = eb_remote_load_config(".eb");
+    status = eb_remote_load_config(".embr");
     if (status != EB_SUCCESS) {
         DEBUG_WARN("Failed to load remote configuration: %d", status);
         /* Non-fatal error, continue */
@@ -225,7 +225,7 @@ eb_status_t eb_remote_add(const char *name, const char *url, const char *token,
     pthread_mutex_unlock(&remote_mutex);
     
     /* Save the updated configuration */
-    eb_status_t status = eb_remote_save_config(".eb");
+    eb_status_t status = eb_remote_save_config(".embr");
     if (status != EB_SUCCESS) {
         DEBUG_WARN("Failed to save remote configuration: %d", status);
         /* Non-fatal error, continue */
@@ -267,7 +267,7 @@ eb_status_t eb_remote_remove(const char *name) {
     pthread_mutex_unlock(&remote_mutex);
     
     /* Save the updated configuration */
-    eb_status_t status = eb_remote_save_config(".eb");
+    eb_status_t status = eb_remote_save_config(".embr");
     if (status != EB_SUCCESS) {
         DEBUG_WARN("Failed to save remote configuration: %d", status);
         /* Non-fatal error, continue */
@@ -627,7 +627,7 @@ void eb_remote_shutdown(void) {
     initialized = false;
     
     /* Save operation states */
-    eb_status_t status = save_operation_states(".eb/operations.state");
+    eb_status_t status = save_operation_states(".embr/operations.state");
     if (status != EB_SUCCESS) {
         DEBUG_WARN("Failed to save operation states: %d", status);
         /* Non-fatal error, continue */
@@ -2125,7 +2125,7 @@ eb_status_t eb_remote_save_config(const char *config_dir) {
     if (config_dir) {
         snprintf(config_path, sizeof(config_path), "%s/config", config_dir);
     } else {
-        snprintf(config_path, sizeof(config_path), ".eb/config");
+        snprintf(config_path, sizeof(config_path), ".embr/config");
     }
     
     /* Open the config file for writing */
@@ -2222,7 +2222,7 @@ eb_status_t eb_remote_save_config(const char *config_dir) {
     if (config_dir) {
         snprintf(config_local_path, sizeof(config_local_path), "%s/config.local", config_dir);
     } else {
-        snprintf(config_local_path, sizeof(config_local_path), ".eb/config.local");
+        snprintf(config_local_path, sizeof(config_local_path), ".embr/config.local");
     }
     
     FILE *config_local = fopen(config_local_path, "w");
@@ -2256,7 +2256,7 @@ eb_status_t eb_remote_load_config(const char *config_dir) {
     if (config_dir) {
         snprintf(config_path, sizeof(config_path), "%s/config", config_dir);
     } else {
-        snprintf(config_path, sizeof(config_path), ".eb/config");
+        snprintf(config_path, sizeof(config_path), ".embr/config");
     }
     
     /* Open the config file for reading */
@@ -2409,7 +2409,7 @@ eb_status_t eb_remote_load_config(const char *config_dir) {
     if (config_dir) {
         snprintf(config_local_path, sizeof(config_local_path), "%s/config.local", config_dir);
     } else {
-        snprintf(config_local_path, sizeof(config_local_path), ".eb/config.local");
+        snprintf(config_local_path, sizeof(config_local_path), ".embr/config.local");
     }
     
     FILE *config_local = fopen(config_local_path, "r");

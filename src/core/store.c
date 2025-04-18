@@ -126,7 +126,7 @@ static char* create_object_path(const char* root, const char* hex_hash) {
     if (!path) return NULL;
     
     DEBUG_PRINT("create_object_path: root=%s, hex_hash=%s", root, hex_hash);
-    snprintf(path, len, "%s/.eb/objects/%s.raw", root, hex_hash);
+    snprintf(path, len, "%s/.embr/objects/%s.raw", root, hex_hash);
     DEBUG_PRINT("create_object_path: CREATED PATH=%s", path);
     
     return path;
@@ -136,11 +136,11 @@ static eb_status_t check_directories(const char* root) {
     char path[4096];
     struct stat st;
     
-    // Main .eb directory
-    snprintf(path, sizeof(path), "%s/.eb", root);
-    DEBUG_PRINT("Checking main .eb directory: %s\n", path);
+    // Main .embr directory
+    snprintf(path, sizeof(path), "%s/.embr", root);
+    DEBUG_PRINT("Checking main .embr directory: %s\n", path);
     if (stat(path, &st) != 0 || !S_ISDIR(st.st_mode)) {
-        DEBUG_PRINT("Main .eb directory check failed: %s\n", strerror(errno));
+        DEBUG_PRINT("Main .embr directory check failed: %s\n", strerror(errno));
         return EB_ERROR_NOT_INITIALIZED;
     }
     
@@ -155,7 +155,7 @@ static eb_status_t check_directories(const char* root) {
     };
     
     for (size_t i = 0; i < sizeof(dirs)/sizeof(dirs[0]); i++) {
-        snprintf(path, sizeof(path), "%s/.eb%s", root, dirs[i]);
+        snprintf(path, sizeof(path), "%s/.embr%s", root, dirs[i]);
         DEBUG_PRINT("Checking directory: %s\n", path);
         if (stat(path, &st) != 0 || !S_ISDIR(st.st_mode)) {
             DEBUG_PRINT("Directory check failed: %s - %s\n", path, strerror(errno));
@@ -287,7 +287,7 @@ static eb_status_t write_object(
     
     // Create temporary file path
     char temp_path[4096];
-    snprintf(temp_path, sizeof(temp_path), "%s/.eb/objects/temp/tmp-%s",
+    snprintf(temp_path, sizeof(temp_path), "%s/.embr/objects/temp/tmp-%s",
              store->storage_path, out_hash);
              
     // Create final object path
@@ -362,7 +362,7 @@ static eb_status_t write_object(
     
     // Create directory if needed
     char dir_path[4096];
-    snprintf(dir_path, sizeof(dir_path), "%s/.eb/objects",
+    snprintf(dir_path, sizeof(dir_path), "%s/.embr/objects",
              store->storage_path);
              
     #ifdef _WIN32
@@ -415,7 +415,7 @@ static eb_status_t write_object(
 /* Add this function if it doesn't exist */
 static eb_status_t append_to_history(const char* root, const char* source, const char* hash, const char* provider) {
     char log_path[PATH_MAX];
-    snprintf(log_path, sizeof(log_path), "%s/.eb/log", root);
+    snprintf(log_path, sizeof(log_path), "%s/.embr/log", root);
     
     // Create history file if it doesn't exist
     FILE* f = fopen(log_path, "a+");
@@ -550,7 +550,7 @@ eb_status_t eb_store_vector(
         
         // Then update index (overwrite mode to keep only latest)
         char index_path[PATH_MAX];
-        snprintf(index_path, sizeof(index_path), "%s/.eb/index", store->storage_path);
+        snprintf(index_path, sizeof(index_path), "%s/.embr/index", store->storage_path);
         
         // Read current index
         FILE* f = fopen(index_path, "r");
@@ -610,7 +610,7 @@ eb_status_t read_object(
         obj_path = malloc(len);
         if (!obj_path) return EB_ERROR_MEMORY_ALLOCATION;
         
-        snprintf(obj_path, len, "%s/.eb/objects/%s", store->storage_path, hash);
+        snprintf(obj_path, len, "%s/.embr/objects/%s", store->storage_path, hash);
         fp = fopen(obj_path, "rb");
         
         if (!fp) {
@@ -1386,7 +1386,7 @@ eb_status_t eb_update_refs(
     
     // Create reference file path
     char ref_path[4096];
-    snprintf(ref_path, sizeof(ref_path), "%s/.eb/metadata/files/%s.ref",
+    snprintf(ref_path, sizeof(ref_path), "%s/.embr/metadata/files/%s.ref",
              store->storage_path, vector_hash);
              
     // Write reference data
@@ -1421,7 +1421,7 @@ eb_status_t eb_get_ref(
     
     // Open reference file
     char ref_path[4096];
-    snprintf(ref_path, sizeof(ref_path), "%s/.eb/metadata/files/%s.ref",
+    snprintf(ref_path, sizeof(ref_path), "%s/.embr/metadata/files/%s.ref",
              store->storage_path, vector_hash);
              
     FILE* fp = fopen(ref_path, "rb");
@@ -1717,7 +1717,7 @@ eb_status_t eb_store_get_latest(eb_store_t* store, const char* file, eb_stored_v
 
     // Get provider from metadata
     char meta_path[PATH_MAX];
-    snprintf(meta_path, sizeof(meta_path), "%s/.eb/objects/%s.meta", store->storage_path, current_hash);
+    snprintf(meta_path, sizeof(meta_path), "%s/.embr/objects/%s.meta", store->storage_path, current_hash);
     
     const char* provider = NULL;
     FILE* meta_file = fopen(meta_path, "r");
@@ -1767,7 +1767,7 @@ eb_status_t eb_store_get_path(eb_store_t *store,
                 return EB_ERROR_INVALID_INPUT;
 
         /* Construct path to embedding file */
-        if (snprintf(path_out, path_size, "%s/.eb/objects/%s.bin",
+        if (snprintf(path_out, path_size, "%s/.embr/objects/%s.bin",
                     store->storage_path, hash) >= (int)path_size) {
                 return EB_ERROR_PATH_TOO_LONG;
         }
@@ -1808,7 +1808,7 @@ eb_status_t eb_store_resolve_hash(
 
     /* Check if file exists directly first */
     char direct_path[4096];
-    snprintf(direct_path, sizeof(direct_path), "%s/.eb/objects/%s.raw", 
+    snprintf(direct_path, sizeof(direct_path), "%s/.embr/objects/%s.raw", 
              store->storage_path, partial_hash);
     
     if (access(direct_path, F_OK) == 0) {
@@ -1819,7 +1819,7 @@ eb_status_t eb_store_resolve_hash(
 
     /* Search in objects directory */
     char objects_dir[4096];
-    snprintf(objects_dir, sizeof(objects_dir), "%s/.eb/objects", store->storage_path);
+    snprintf(objects_dir, sizeof(objects_dir), "%s/.embr/objects", store->storage_path);
     
     DIR* dir = opendir(objects_dir);
     if (!dir) {
@@ -1879,7 +1879,7 @@ eb_status_t get_current_hash(const char* root, const char* source, char* hash_ou
     }
 
     char index_path[PATH_MAX];
-    snprintf(index_path, sizeof(index_path), "%s/.eb/index", root);
+    snprintf(index_path, sizeof(index_path), "%s/.embr/index", root);
 
     FILE* fp = fopen(index_path, "r");
     if (!fp) {
@@ -1944,7 +1944,7 @@ eb_status_t store_embedding_file(const char* embedding_path, const char* source_
 
     // Create objects directory if it doesn't exist
     char objects_dir[PATH_MAX];
-    snprintf(objects_dir, sizeof(objects_dir), "%s/.eb/objects", base_dir);
+    snprintf(objects_dir, sizeof(objects_dir), "%s/.embr/objects", base_dir);
     if (mkdir_p(objects_dir) != 0) {
         return EB_ERROR_FILE_IO;
     }
@@ -2022,8 +2022,8 @@ eb_status_t store_embedding_file(const char* embedding_path, const char* source_
     // Update index - read existing index, filter out old entries for same file+model, then write back
     char index_path[PATH_MAX];
     char temp_index_path[PATH_MAX];
-    snprintf(index_path, sizeof(index_path), "%s/.eb/index", base_dir);
-    snprintf(temp_index_path, sizeof(temp_index_path), "%s/.eb/index.tmp", base_dir);
+    snprintf(index_path, sizeof(index_path), "%s/.embr/index", base_dir);
+    snprintf(temp_index_path, sizeof(temp_index_path), "%s/.embr/index.tmp", base_dir);
     
     FILE* fp_in = fopen(index_path, "r");
     FILE* fp_out = fopen(temp_index_path, "w");
@@ -2045,7 +2045,7 @@ eb_status_t store_embedding_file(const char* embedding_path, const char* source_
                 if (strcmp(idx_path, source_file) == 0) {
                     // Check if this is for the same provider/model
                     char meta_path[PATH_MAX];
-                    snprintf(meta_path, sizeof(meta_path), "%s/.eb/objects/%s.meta", base_dir, idx_hash);
+                    snprintf(meta_path, sizeof(meta_path), "%s/.embr/objects/%s.meta", base_dir, idx_hash);
                     
                     FILE* meta_fp = fopen(meta_path, "r");
                     bool same_provider = false;
@@ -2098,13 +2098,13 @@ eb_status_t store_embedding_file(const char* embedding_path, const char* source_
 
     // Create refs/models directory if it doesn't exist
     char refs_dir[PATH_MAX];
-    snprintf(refs_dir, sizeof(refs_dir), "%s/.eb/refs", base_dir);
+    snprintf(refs_dir, sizeof(refs_dir), "%s/.embr/refs", base_dir);
     if (mkdir_p(refs_dir) != 0) {
         fprintf(stderr, "Warning: Failed to create refs directory\n");
     }
     
     char models_dir[PATH_MAX];
-    snprintf(models_dir, sizeof(models_dir), "%s/.eb/refs/models", base_dir);
+    snprintf(models_dir, sizeof(models_dir), "%s/.embr/refs/models", base_dir);
     if (mkdir_p(models_dir) != 0) {
         fprintf(stderr, "Warning: Failed to create models directory\n");
     }
@@ -2112,7 +2112,7 @@ eb_status_t store_embedding_file(const char* embedding_path, const char* source_
     // Update model reference file
     if (provider) {
         char model_ref_path[PATH_MAX];
-        snprintf(model_ref_path, sizeof(model_ref_path), "%s/.eb/refs/models/%s", base_dir, provider);
+        snprintf(model_ref_path, sizeof(model_ref_path), "%s/.embr/refs/models/%s", base_dir, provider);
         
         // Read existing model references first
         FILE* model_read_fp = fopen(model_ref_path, "r");
@@ -2168,8 +2168,8 @@ eb_status_t store_embedding_file(const char* embedding_path, const char* source_
     // Update HEAD file to contain only the current set name, not model references
     char head_path[PATH_MAX];
     char temp_path[PATH_MAX];
-    snprintf(head_path, sizeof(head_path), "%s/.eb/HEAD", base_dir);
-    snprintf(temp_path, sizeof(temp_path), "%s/.eb/HEAD.tmp", base_dir);
+    snprintf(head_path, sizeof(head_path), "%s/.embr/HEAD", base_dir);
+    snprintf(temp_path, sizeof(temp_path), "%s/.embr/HEAD.tmp", base_dir);
     FILE *head_fp, *temp_fp;
     char line[MAX_LINE_LEN];
     bool has_set_name = false;
@@ -2329,7 +2329,7 @@ static eb_status_t copy_file(const char* src, const char* dst) {
 eb_status_t get_version_history(const char* root, const char* source, 
                               eb_stored_vector_t** out_versions, size_t* out_count) {
     char log_path[PATH_MAX];
-    snprintf(log_path, sizeof(log_path), "%s/.eb/log", root);
+    snprintf(log_path, sizeof(log_path), "%s/.embr/log", root);
     
     FILE* f = fopen(log_path, "r");
     if (!f) {
@@ -2601,7 +2601,7 @@ eb_status_t get_current_hash_with_model(const char* root, const char* source, co
 
     // First check refs/models directory
     char model_ref_path[PATH_MAX];
-    snprintf(model_ref_path, sizeof(model_ref_path), "%s/.eb/refs/models/%s", root, model);
+    snprintf(model_ref_path, sizeof(model_ref_path), "%s/.embr/refs/models/%s", root, model);
     DEBUG_PRINT("get_current_hash_with_model: Checking model ref file: %s\n", model_ref_path);
 
     FILE* model_fp = fopen(model_ref_path, "r");
@@ -2636,7 +2636,7 @@ eb_status_t get_current_hash_with_model(const char* root, const char* source, co
                 
                 // Check log file to verify the hash belongs to this file
                 char log_path[PATH_MAX];
-                snprintf(log_path, sizeof(log_path), "%s/.eb/log", root);
+                snprintf(log_path, sizeof(log_path), "%s/.embr/log", root);
                 DEBUG_PRINT("get_current_hash_with_model: Verifying hash in log: %s\n", log_path);
                 
                 FILE* log_fp = fopen(log_path, "r");
@@ -2685,7 +2685,7 @@ eb_status_t get_current_hash_with_model(const char* root, const char* source, co
 
     // If not found in refs/models, check index file for this source file and model
     char index_path[PATH_MAX];
-    snprintf(index_path, sizeof(index_path), "%s/.eb/index", root);
+    snprintf(index_path, sizeof(index_path), "%s/.embr/index", root);
     DEBUG_PRINT("get_current_hash_with_model: Checking index file: %s\n", index_path);
 
     FILE* index_fp = fopen(index_path, "r");
@@ -2709,7 +2709,7 @@ eb_status_t get_current_hash_with_model(const char* root, const char* source, co
                     
                     // Check if this is the right model
                     char meta_path[PATH_MAX];
-                    snprintf(meta_path, sizeof(meta_path), "%s/.eb/objects/%s.meta", root, idx_hash);
+                    snprintf(meta_path, sizeof(meta_path), "%s/.embr/objects/%s.meta", root, idx_hash);
                     
                     FILE* meta_fp = fopen(meta_path, "r");
                     if (meta_fp) {
@@ -2749,7 +2749,7 @@ eb_status_t get_current_hash_with_model(const char* root, const char* source, co
     DEBUG_PRINT("get_current_hash_with_model: No matching entry found in index, checking history\n");
     
     char log_path[PATH_MAX];
-    snprintf(log_path, sizeof(log_path), "%s/.eb/log", root);
+    snprintf(log_path, sizeof(log_path), "%s/.embr/log", root);
     DEBUG_PRINT("get_current_hash_with_model: Log path: %s\n", log_path);
 
     FILE* fp = fopen(log_path, "r");

@@ -21,7 +21,7 @@
 
 /* Command usage strings */
 static const char* SWITCH_USAGE = 
-    "Usage: eb switch <set-name>\n"
+    "Usage: embr switch <set-name>\n"
     "\n"
     "Switch to a different embedding set.\n"
     "\n"

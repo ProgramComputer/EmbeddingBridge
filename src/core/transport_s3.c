@@ -235,7 +235,7 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
         }
     }
     
-    /* Transform the data from .eb format to parquet format using the transformer */
+    /* Transform the data from .embr format to parquet format using the transformer */
     void *transformed_data = NULL;
     size_t transformed_size = 0;
     bool need_to_free_transformed = false;
@@ -318,13 +318,13 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
     
     /* Try to extract from local metadata */
     if (transport->target_path) {
-        /* Look in .eb/objects directory for metadata files */
+        /* Look in .embr/objects directory for metadata files */
         DIR *dir;
         struct dirent *entry;
         
-        dir = opendir(".eb/objects");
+        dir = opendir(".embr/objects");
         if (dir) {
-            DEBUG_INFO("Looking for metadata files in .eb/objects directory");
+            DEBUG_INFO("Looking for metadata files in .embr/objects directory");
             
             /* Extract document name from target path */
             const char *target_filename = strrchr(transport->target_path, '/');
@@ -337,7 +337,7 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
             DEBUG_INFO("Looking for metadata for file: %s", target_filename);
             
             /* Read the entire index first to find the hash we're processing */
-            FILE *index_file = fopen(".eb/index", "r");
+            FILE *index_file = fopen(".embr/index", "r");
             char index_hash[128] = {0};
             
             if (index_file) {
@@ -359,7 +359,7 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
                     
                     /* Find the hash we're currently processing based on the raw file */
                     char raw_path[1024];
-                    snprintf(raw_path, sizeof(raw_path), ".eb/objects/%s.raw", file_hash);
+                    snprintf(raw_path, sizeof(raw_path), ".embr/objects/%s.raw", file_hash);
                     
                     struct stat st;
                     if (stat(raw_path, &st) == 0) {
@@ -397,7 +397,7 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
                             
                             /* Now load the metadata for this hash */
                             char meta_path[PATH_MAX];
-                            snprintf(meta_path, sizeof(meta_path), ".eb/objects/%s.meta", index_hash);
+                            snprintf(meta_path, sizeof(meta_path), ".embr/objects/%s.meta", index_hash);
                             
                             DEBUG_INFO("Reading metadata from: %s", meta_path);
                             FILE *meta_file = fopen(meta_path, "r");
@@ -520,7 +520,7 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
             
             closedir(dir);
         } else {
-            DEBUG_WARN("Couldn't open .eb/objects directory");
+            DEBUG_WARN("Couldn't open .embr/objects directory");
         }
     }
     

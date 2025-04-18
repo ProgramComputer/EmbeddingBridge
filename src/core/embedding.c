@@ -31,8 +31,8 @@
 #define MAX_MODEL_NAME 64
 
 // File paths for model registry
-#define MODEL_REGISTRY_DIR ".eb/metadata/models"
-#define MODEL_REGISTRY_FILE ".eb/metadata/models/registry.json"
+#define MODEL_REGISTRY_DIR ".embr/metadata/models"
+#define MODEL_REGISTRY_FILE ".embr/metadata/models/registry.json"
 #define EB_DIR_ENVIRONMENT "EB_DIR"
 #define PATH_SEP '/'
 
@@ -148,8 +148,8 @@ static char* find_repository_root(void) {
     char* current = normalized;
     while (strlen(current) > 1) {
         char eb_dir[PATH_MAX];
-        snprintf(eb_dir, sizeof(eb_dir), "%s/.eb", current);
-        DEBUG_PRINT("Checking for .eb directory at: %s\n", eb_dir);
+        snprintf(eb_dir, sizeof(eb_dir), "%s/.embr", current);
+        DEBUG_PRINT("Checking for .embr directory at: %s\n", eb_dir);
         
         // Resolve any symbolic links
         char* resolved = resolve_symlink(eb_dir);
@@ -161,7 +161,7 @@ static char* find_repository_root(void) {
         
         struct stat st;
         if (stat(resolved, &st) == 0 && S_ISDIR(st.st_mode)) {
-            DEBUG_PRINT("Found .eb directory at: %s\n", resolved);
+            DEBUG_PRINT("Found .embr directory at: %s\n", resolved);
             free(resolved);
             
             // Cache the result

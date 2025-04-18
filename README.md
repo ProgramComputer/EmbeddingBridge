@@ -24,26 +24,26 @@ make install
 
 ```bash
 # Initialize
-eb init
+embr init
 
 # Register a model
-eb model register text-embedding-3-small --dimensions 1536 --normalize
+embr model register text-embedding-3-small --dimensions 1536 --normalize
 
 # Store an embedding
-eb store --embedding vector.bin --dims 1536 document.txt
+embr store --embedding vector.bin --dims 1536 document.txt
 
 # Check status
-eb status document.txt
+embr status document.txt
 
 # Compare embeddings
-eb diff <hash1> <hash2>
+embr diff <hash1> <hash2>
 
 # Roll back to previous version
-eb rollback <hash> document.txt
+embr rollback <hash> document.txt
 
 # Create and manage sets
-eb set create experimental
-eb set switch experimental
+embr set create experimental
+embr set switch experimental
 ```
 
 ## Core Commands
@@ -51,69 +51,69 @@ eb set switch experimental
 ### Model Management
 ```bash
 # Register a new model
-eb model register <model-name> --dimensions <dims> [--normalize]
+embr model register <model-name> --dimensions <dims> [--normalize]
 
 # List registered models
-eb model list
+embr model list
 ```
 
 ### Embedding Operations
 ```bash
 # Store embedding from binary file
-eb store --embedding vector.bin --dims 1536 file.txt
+embr store --embedding vector.bin --dims 1536 file.txt
 
 # Store embedding from numpy file
-eb store --embedding vector.npy file.txt
+embr store --embedding vector.npy file.txt
 
 # Check embedding status
-eb status file.txt
-eb status -v file.txt  # verbose output
+embr status file.txt
+embr status -v file.txt  # verbose output
 
 # Compare embeddings
-eb diff <hash1> <hash2>
+embr diff <hash1> <hash2>
 
 # Roll back to previous version
-eb rollback <hash> file.txt
+embr rollback <hash> file.txt
 ```
 
 ### Set Management
 ```bash
 # Create a new set of embeddings
-eb set create <name> [--desc="Description"] [--base=<base-set>]
+embr set create <name> [--desc="Description"] [--base=<base-set>]
 
 # List available sets
-eb set list
-eb set list --verbose
+embr set list
+embr set list --verbose
 
 # Switch between sets
-eb set switch <name>
+embr set switch <name>
 
 # Show current set status
-eb set status
+embr set status
 
 # Compare differences between sets
-eb set diff <set1> <set2>
+embr set diff <set1> <set2>
 
 # Merge sets (future functionality)
-eb set merge <source-set> [--target=<target-set>] [--strategy=<strategy>]
+embr set merge <source-set> [--target=<target-set>] [--strategy=<strategy>]
 
 # Delete a set
-eb set delete <name> [--force]
+embr set delete <name> [--force]
 ```
 
 ### Remote Operations (Future Functionality)
 ```bash
 # Add a remote
-eb remote add <name> <url>
+embr remote add <name> <url>
 
 # List remote sets
-eb remote sets <remote>
+embr remote sets <remote>
 
 # Push a set to remote
-eb remote push <set-name> [remote]
+embr remote push <set-name> [remote]
 
 # Pull a set from remote
-eb remote pull <set-name> [remote]
+embr remote pull <set-name> [remote]
 ```
 
 ## Contributing

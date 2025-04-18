@@ -7,7 +7,7 @@
 #include "../core/debug.h"
 
 static const char* MODEL_USAGE = 
-    "Usage: eb model <command> [options]\n"
+    "Usage: embr model <command> [options]\n"
     "\n"
     "Commands:\n"
     "  register <name>    Register a new model\n"
@@ -22,10 +22,10 @@ static const char* MODEL_USAGE =
     "\n"
     "Examples:\n"
     "  # Register a new model\n"
-    "  eb model register my-model --dimensions 1536 --normalize\n"
+    "  embr model register my-model --dimensions 1536 --normalize\n"
     "\n"
     "  # List registered models\n"
-    "  eb model list\n";
+    "  embr model list\n";
 
 static int cmd_model_register(int argc, char** argv) {
     DEBUG_PRINT("Entering cmd_model_register\n");

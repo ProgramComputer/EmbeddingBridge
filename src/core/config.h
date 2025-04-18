@@ -23,7 +23,7 @@
 #define EB_AUTH_PASSWORD_ENV "EB_AUTH_PASSWORD"
 
 /* Config file related settings */
-#define EB_CONFIG_FILE ".eb/config"
+#define EB_CONFIG_FILE ".embr/config"
 #define EB_CONFIG_DEFAULT_SECTION "core"
 #define EB_CONFIG_BUFFER_SIZE 4096
 

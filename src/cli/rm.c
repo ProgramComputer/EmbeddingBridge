@@ -28,7 +28,7 @@
 #define MAX_PATH_LEN PATH_MAX
 
 static const char* RM_USAGE = 
-    "Usage: eb rm [options] <file>\n"
+    "Usage: embr rm [options] <file>\n"
     "\n"
     "Remove embeddings from tracking\n"
     "\n"
@@ -41,10 +41,10 @@ static const char* RM_USAGE =
     "  -q, --quiet      Minimal output\n"
     "\n"
     "Examples:\n"
-    "  eb rm file.txt              # Remove all embeddings for file.txt\n"
-    "  eb rm --cached file.txt     # Remove from index but keep embedding files\n"
-    "  eb rm -m openai-3 file.txt  # Remove only embeddings for openai-3 model\n"
-    "  eb rm -c chunk1.npy file.txt # Remove only the specific chunk embedding\n";
+    "  embr rm file.txt              # Remove all embeddings for file.txt\n"
+    "  embr rm --cached file.txt     # Remove from index but keep embedding files\n"
+    "  embr rm -m openai-3 file.txt  # Remove only embeddings for openai-3 model\n"
+    "  embr rm -c chunk1.npy file.txt # Remove only the specific chunk embedding\n";
 
 // Forward declarations
 static bool is_file_tracked(const char* repo_root, const char* file_path);
@@ -72,7 +72,7 @@ static char* file_path_to_ref_path(const char* file_path) {
 static bool is_file_tracked(const char* repo_root, const char* file_path) {
     // First check if file exists in the index
     char index_path[MAX_PATH_LEN];
-    snprintf(index_path, sizeof(index_path), "%s/.eb/index", repo_root);
+    snprintf(index_path, sizeof(index_path), "%s/.embr/index", repo_root);
     
     printf("DEBUG: Checking if file '%s' is tracked in index '%s'\n", file_path, index_path);
     
@@ -114,7 +114,7 @@ static int remove_from_index(const char* repo_root, const char* file_path,
                             const char* model, const char* chunk_id, bool all) {
     // First read the index file to find matching hashes
     char index_path[MAX_PATH_LEN];
-    snprintf(index_path, sizeof(index_path), "%s/.eb/index", repo_root);
+    snprintf(index_path, sizeof(index_path), "%s/.embr/index", repo_root);
     
     printf("DEBUG: Opening index file: %s\n", index_path);
     FILE* index_file = fopen(index_path, "r");
@@ -158,7 +158,7 @@ static int remove_from_index(const char* repo_root, const char* file_path,
         
         // Get metadata to find model info
         char meta_path[MAX_PATH_LEN];
-        snprintf(meta_path, sizeof(meta_path), "%s/.eb/objects/%s.meta", repo_root, hash);
+        snprintf(meta_path, sizeof(meta_path), "%s/.embr/objects/%s.meta", repo_root, hash);
         
         printf("DEBUG: Checking metadata: %s\n", meta_path);
         
@@ -284,7 +284,7 @@ static int remove_from_index(const char* repo_root, const char* file_path,
         // Remove from model refs
         if (matched_models[i]) {
             char model_ref_path[MAX_PATH_LEN];
-            snprintf(model_ref_path, sizeof(model_ref_path), "%s/.eb/refs/models/%s", 
+            snprintf(model_ref_path, sizeof(model_ref_path), "%s/.embr/refs/models/%s", 
                      repo_root, matched_models[i]);
             
             printf("DEBUG: Checking model ref: %s\n", model_ref_path);
@@ -331,9 +331,9 @@ static int remove_from_index(const char* repo_root, const char* file_path,
         
         // Delete the object and metadata files directly
         char obj_path[MAX_PATH_LEN];
-        snprintf(obj_path, sizeof(obj_path), "%s/.eb/objects/%s.raw", repo_root, hashes[i]);
+        snprintf(obj_path, sizeof(obj_path), "%s/.embr/objects/%s.raw", repo_root, hashes[i]);
         char meta_path[MAX_PATH_LEN];
-        snprintf(meta_path, sizeof(meta_path), "%s/.eb/objects/%s.meta", repo_root, hashes[i]);
+        snprintf(meta_path, sizeof(meta_path), "%s/.embr/objects/%s.meta", repo_root, hashes[i]);
         
         printf("DEBUG: Removing object file: %s\n", obj_path);
         if (unlink(obj_path) != 0 && errno != ENOENT) {
@@ -360,7 +360,7 @@ static int remove_embedding_files(const char* repo_root, const char* file_path,
                                  const char* model, const char* chunk_id, bool all, bool verbose) {
     // First read the index file to find matching hashes
     char index_path[MAX_PATH_LEN];
-    snprintf(index_path, sizeof(index_path), "%s/.eb/index", repo_root);
+    snprintf(index_path, sizeof(index_path), "%s/.embr/index", repo_root);
     
     FILE* index_file = fopen(index_path, "r");
     if (!index_file) {
@@ -394,7 +394,7 @@ static int remove_embedding_files(const char* repo_root, const char* file_path,
         
         // Read metadata file to get model info
         char meta_path[MAX_PATH_LEN];
-        snprintf(meta_path, sizeof(meta_path), "%s/.eb/objects/%s.meta", repo_root, hash);
+        snprintf(meta_path, sizeof(meta_path), "%s/.embr/objects/%s.meta", repo_root, hash);
         
         FILE* meta_file = fopen(meta_path, "r");
         if (meta_file) {
@@ -435,7 +435,7 @@ static int remove_embedding_files(const char* repo_root, const char* file_path,
         if (should_remove) {
             // Remove the object file
             char obj_path[MAX_PATH_LEN];
-            snprintf(obj_path, sizeof(obj_path), "%s/.eb/objects/%s.raw", repo_root, hash);
+            snprintf(obj_path, sizeof(obj_path), "%s/.embr/objects/%s.raw", repo_root, hash);
             
             if (verbose) {
                 cli_info("Removing embedding object: %s", obj_path);
@@ -451,7 +451,7 @@ static int remove_embedding_files(const char* repo_root, const char* file_path,
             }
             
             // Remove metadata file
-            snprintf(obj_path, sizeof(obj_path), "%s/.eb/objects/%s.meta", repo_root, hash);
+            snprintf(obj_path, sizeof(obj_path), "%s/.embr/objects/%s.meta", repo_root, hash);
             
             if (unlink(obj_path) != 0 && errno != ENOENT) {
                     cli_warning("Failed to remove metadata file: %s", obj_path);
