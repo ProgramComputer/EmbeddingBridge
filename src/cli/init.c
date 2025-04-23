@@ -7,6 +7,7 @@
 #include <limits.h>  // For PATH_MAX
 #include "cli.h"
 #include "../core/path_utils.h"
+#include "set.h"
 
 static const char* INIT_USAGE = 
     "Usage: embr init [options]\n"
@@ -63,106 +64,106 @@ static const struct {
     {"pre-commit", "#!/bin/sh\n"
         "# eb pre-commit hook: Generate embeddings for changed files\n"
         "\n"
-        "# Check if hook is enabled in eb config\n"
-        "if ! eb config get git.hooks.pre-commit.enabled >/dev/null 2>&1 || \\\n"
-        "   [ \"$(eb config get git.hooks.pre-commit.enabled)\" = \"false\" ]; then\n"
+        "# Check if hook is enabled in embr config\n"
+        "if ! embr config get git.hooks.pre-commit.enabled >/dev/null 2>&1 || \\\n"
+        "   [ \"$(embr config get git.hooks.pre-commit.enabled)\" = \"false\" ]; then\n"
         "    exit 0  # Hook disabled, skip silently\n"
         "fi\n"
         "\n"
         "# Get verbosity setting\n"
-        "verbose=$(eb config get git.hooks.pre-commit.verbose 2>/dev/null)\n"
+        "verbose=$(embr config get git.hooks.pre-commit.verbose 2>/dev/null)\n"
         "\n"
         "# Get list of staged files\n"
         "files=$(git diff --cached --name-only --diff-filter=ACM)\n"
         "if [ -n \"$files\" ]; then\n"
         "    if [ \"$verbose\" = \"true\" ]; then\n"
-        "        echo \"eb: Generating embeddings for staged files:\"\n"
+        "        echo \"embr: Generating embeddings for staged files:\"\n"
         "        echo \"$files\" | sed 's/^/  /'\n"
         "    fi\n"
         "    # Generate embeddings for changed files\n"
         "    echo \"$files\" | eb store --stdin || {\n"
-        "        echo \"eb: Failed to generate embeddings\"\n"
-        "        echo \"hint: Use 'eb config set git.hooks.pre-commit.enabled false' to disable this hook\"\n"
+        "        echo \"embr: Failed to generate embeddings\"\n"
+        "        echo \"hint: Use 'embr config set git.hooks.pre-commit.enabled false' to disable this hook\"\n"
         "        exit 1\n"
         "    }\n"
-        "    [ \"$verbose\" = \"true\" ] && echo \"eb: Successfully generated embeddings\"\n"
+        "    [ \"$verbose\" = \"true\" ] && echo \"embr: Successfully generated embeddings\"\n"
         "fi\n"
         "exit 0\n"},
     {"post-commit", "#!/bin/sh\n"
         "# eb post-commit hook: Update metadata after commit\n"
         "\n"
         "# Check if hook is enabled\n"
-        "if ! eb config get git.hooks.post-commit.enabled >/dev/null 2>&1 || \\\n"
-        "   [ \"$(eb config get git.hooks.post-commit.enabled)\" = \"false\" ]; then\n"
+        "if ! embr config get git.hooks.post-commit.enabled >/dev/null 2>&1 || \\\n"
+        "   [ \"$(embr config get git.hooks.post-commit.enabled)\" = \"false\" ]; then\n"
         "    exit 0  # Hook disabled, skip silently\n"
         "fi\n"
         "\n"
         "# Get verbosity setting\n"
-        "verbose=$(eb config get git.hooks.post-commit.verbose 2>/dev/null)\n"
+        "verbose=$(embr config get git.hooks.post-commit.verbose 2>/dev/null)\n"
         "\n"
         "# Get the commit hash\n"
         "commit=$(git rev-parse HEAD)\n"
         "\n"
-        "[ \"$verbose\" = \"true\" ] && echo \"eb: Updating metadata for commit $commit\"\n"
+        "[ \"$verbose\" = \"true\" ] && echo \"embr: Updating metadata for commit $commit\"\n"
         "\n"
         "# Update metadata for the commit\n"
         "eb metadata update \"$commit\" || {\n"
-        "    echo \"eb: Failed to update metadata\"\n"
-        "    echo \"hint: Use 'eb config set git.hooks.post-commit.enabled false' to disable this hook\"\n"
+        "    echo \"embr: Failed to update metadata\"\n"
+        "    echo \"hint: Use 'embr config set git.hooks.post-commit.enabled false' to disable this hook\"\n"
         "    exit 1\n"
         "}\n"
-        "[ \"$verbose\" = \"true\" ] && echo \"eb: Successfully updated metadata\"\n"
+        "[ \"$verbose\" = \"true\" ] && echo \"embr: Successfully updated metadata\"\n"
         "exit 0\n"},
     {"pre-push", "#!/bin/sh\n"
         "# eb pre-push hook: Validate embeddings before push\n"
         "\n"
         "# Check if hook is enabled\n"
-        "if ! eb config get git.hooks.pre-push.enabled >/dev/null 2>&1 || \\\n"
-        "   [ \"$(eb config get git.hooks.pre-push.enabled)\" = \"false\" ]; then\n"
+        "if ! embr config get git.hooks.pre-push.enabled >/dev/null 2>&1 || \\\n"
+        "   [ \"$(embr config get git.hooks.pre-push.enabled)\" = \"false\" ]; then\n"
         "    exit 0  # Hook disabled, skip silently\n"
         "fi\n"
         "\n"
         "# Get verbosity setting\n"
-        "verbose=$(eb config get git.hooks.pre-push.verbose 2>/dev/null)\n"
+        "verbose=$(embr config get git.hooks.pre-push.verbose 2>/dev/null)\n"
         "\n"
         "# Get range of commits being pushed\n"
         "while read local_ref local_sha remote_ref remote_sha; do\n"
-        "    [ \"$verbose\" = \"true\" ] && echo \"eb: Validating embeddings for commits $remote_sha..$local_sha\"\n"
+        "    [ \"$verbose\" = \"true\" ] && echo \"embr: Validating embeddings for commits $remote_sha..$local_sha\"\n"
         "    # Validate embeddings in the range\n"
         "    eb validate \"$remote_sha..$local_sha\" || {\n"
-        "        echo \"eb: Embedding validation failed\"\n"
-        "        echo \"hint: Use 'eb config set git.hooks.pre-push.enabled false' to disable this hook\"\n"
+        "        echo \"embr: Embedding validation failed\"\n"
+        "        echo \"hint: Use 'embr config set git.hooks.pre-push.enabled false' to disable this hook\"\n"
         "        exit 1\n"
         "    }\n"
-        "    [ \"$verbose\" = \"true\" ] && echo \"eb: Successfully validated embeddings\"\n"
+        "    [ \"$verbose\" = \"true\" ] && echo \"embr: Successfully validated embeddings\"\n"
         "done\n"
         "exit 0\n"},
     {"post-merge", "#!/bin/sh\n"
         "# eb post-merge hook: Update embeddings after merge\n"
         "\n"
         "# Check if hook is enabled\n"
-        "if ! eb config get git.hooks.post-merge.enabled >/dev/null 2>&1 || \\\n"
-        "   [ \"$(eb config get git.hooks.post-merge.enabled)\" = \"false\" ]; then\n"
+        "if ! embr config get git.hooks.post-merge.enabled >/dev/null 2>&1 || \\\n"
+        "   [ \"$(embr config get git.hooks.post-merge.enabled)\" = \"false\" ]; then\n"
         "    exit 0  # Hook disabled, skip silently\n"
         "fi\n"
         "\n"
         "# Get verbosity setting\n"
-        "verbose=$(eb config get git.hooks.post-merge.verbose 2>/dev/null)\n"
+        "verbose=$(embr config get git.hooks.post-merge.verbose 2>/dev/null)\n"
         "\n"
         "# Get list of changed files in the merge\n"
         "files=$(git diff ORIG_HEAD HEAD --name-only)\n"
         "if [ -n \"$files\" ]; then\n"
         "    if [ \"$verbose\" = \"true\" ]; then\n"
-        "        echo \"eb: Updating embeddings for merged files:\"\n"
+        "        echo \"embr: Updating embeddings for merged files:\"\n"
         "        echo \"$files\" | sed 's/^/  /'\n"
         "    fi\n"
         "    # Update embeddings for changed files\n"
         "    echo \"$files\" | eb store --stdin || {\n"
-        "        echo \"eb: Failed to update embeddings\"\n"
-        "        echo \"hint: Use 'eb config set git.hooks.post-merge.enabled false' to disable this hook\"\n"
+        "        echo \"embr: Failed to update embeddings\"\n"
+        "        echo \"hint: Use 'embr config set git.hooks.post-merge.enabled false' to disable this hook\"\n"
         "        exit 1\n"
         "    }\n"
-        "    [ \"$verbose\" = \"true\" ] && echo \"eb: Successfully updated embeddings\"\n"
+        "    [ \"$verbose\" = \"true\" ] && echo \"embr: Successfully updated embeddings\"\n"
         "fi\n"
         "exit 0\n"},
     {NULL, NULL}
@@ -248,19 +249,9 @@ static eb_status_t create_eb_structure(const char* root, const char* model __att
         return 1;
     }
 
-    // Create empty history file
-    snprintf(path, sizeof(path), "%s/.embr/log", root);
-    if (write_file(path, "") != 0) {
-        fprintf(stderr, "error: could not create history file\n");
-        return 1;
-    }
-    
-    // Create empty index file
-    snprintf(path, sizeof(path), "%s/.embr/index", root);
-    if (write_file(path, "") != 0) {
-        fprintf(stderr, "error: could not create index file\n");
-        return 1;
-    }
+    // Do not create .embr/log or .embr/index here; per-set files are created by set_create
+    // Ensure default set 'main' exists
+    set_create("main", "Default set", NULL);
     
     return 0;
 }

@@ -161,8 +161,9 @@ static int local_disconnect(eb_transport_t *transport)
 }
 
 /* Send data to local repository */
-static int local_send_data(eb_transport_t *transport, const void *data, size_t size)
+static int local_send_data(eb_transport_t *transport, const void *data, size_t size, const char *hash)
 {
+	(void)hash; // Ignore hash for local transport
 	struct local_data *local;
 	char tmp_path[PATH_MAX];
 	char *objects_dir;

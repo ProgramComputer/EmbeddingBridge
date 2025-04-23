@@ -6,6 +6,7 @@
 #include "set.h"
 #include "merge.h"
 #include "gc.h"
+#include "remote.h"
 
 static const char* USAGE = 
     "Usage: embr <command> [options] [args]\n"
@@ -25,7 +26,6 @@ static const char* USAGE =
     "Management Commands:\n"
     "  config        Configure embedding settings\n"
     "  remote        Manage embedding storage locations\n"
-    "  hooks         Manage Git hooks\n"
     "  model         Manage embedding models\n"
     "  rollback      Revert to a previous embedding version\n"
     "  gc            Garbage collect unreferenced embeddings\n"
@@ -48,12 +48,13 @@ static const eb_command_t commands[] = {
     // Management commands
     {"config", "Configure embedding settings", cmd_config},
     {"remote", "Manage embedding storage locations", cmd_remote},
-    {"hooks", "Manage Git hooks", cmd_hooks},
     {"model", "Manage embedding models", cmd_model},
     {"rollback", "Revert to a previous embedding version", cmd_rollback},
     {"gc", "Garbage collect unreferenced embeddings", cmd_gc},
     {"get", "Download a file or directory from a repository", cmd_get},
     {"rm", "Remove embeddings from tracking", cmd_rm},
+    {"pull", "Download embedding objects from a remote repository", cmd_pull},
+    {"push", "Upload embedding objects to a remote repository", cmd_push},
     
     {NULL, NULL, NULL}
 };
@@ -80,6 +81,8 @@ static void suggest_command(const char* cmd) {
 int main(int argc, char** argv) {
     /* Initialize debug system */
     eb_debug_init();
+
+    eb_remote_init();
     
     if (getenv("EB_DEBUG")) {
         DEBUG_INFO("Main called with %d arguments", argc);

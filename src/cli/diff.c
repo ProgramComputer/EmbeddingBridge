@@ -883,10 +883,9 @@ static bool is_hex_string(const char* str) {
 
 /* Check if a file has embeddings from multiple models */
 static bool has_multiple_models(const char* repo_root, const char* file_path) {
-    char log_path[PATH_MAX];
-    snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
-    
+    char* log_path = get_current_set_log_path();
     FILE* fp = fopen(log_path, "r");
+    free(log_path);
     if (!fp) return false;
     
     char line[1024];
@@ -960,11 +959,9 @@ static bool has_multiple_models(const char* repo_root, const char* file_path) {
 static char* get_available_models(const char* repo_root, const char* file_path) {
     static char model_list[512] = {0};
     model_list[0] = '\0';
-    
-    char log_path[PATH_MAX];
-    snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
-    
+    char* log_path = get_current_set_log_path();
     FILE* fp = fopen(log_path, "r");
+    free(log_path);
     if (!fp) return model_list;
     
     char line[1024];
@@ -1045,11 +1042,9 @@ static char* get_available_models(const char* repo_root, const char* file_path) 
 static const char* get_default_model_for_file(const char* repo_root, const char* file_path) {
     static char default_model[64] = {0};
     default_model[0] = '\0';
-    
-    char log_path[PATH_MAX];
-    snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
-    
+    char* log_path = get_current_set_log_path();
     FILE* fp = fopen(log_path, "r");
+    free(log_path);
     if (!fp) return NULL;
     
     char line[1024];

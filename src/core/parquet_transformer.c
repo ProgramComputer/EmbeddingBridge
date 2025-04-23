@@ -31,10 +31,12 @@
 #include "debug.h"
 #include "compress.h"
 #include "types.h"  /* Include types.h for eb_object_header_t */
+#include "path_utils.h"
 
 /* Arrow GLib includes */
 #include <arrow-glib/arrow-glib.h>
 #include <parquet-glib/parquet-glib.h>
+#include <glib.h>
 
 /* Forward declarations */
 static eb_status_t parquet_transform(struct eb_transformer* transformer, 
@@ -451,6 +453,9 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
         }
     }
     
+    /* Determine file type for metadata */
+    const char *file_type = is_npy ? "npy" : "bin";
+    
     /* Create Pinecone-compatible Parquet format */
     /* Schema: id (string), values (list of floats) */
     DEBUG_INFO("Creating Pinecone-compatible schema with id and values");
@@ -527,7 +532,10 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
                 
                 /* Add dimensions */
                 written += snprintf(metadata_json + written, metadata_json_size - written,
-                                  ",\"dimensions\":%u}", dimensions);
+                                  ",\"dimensions\":%u", dimensions);
+                /* Add file_type */
+                written += snprintf(metadata_json + written, metadata_json_size - written,
+                                  ",\"file_type\":\"%s\"}", file_type);
                 
                 DEBUG_INFO("Created metadata JSON: %s", metadata_json);
             }
@@ -546,7 +554,7 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
             metadata_json = (char*)malloc(metadata_json_size);
             if (metadata_json) {
                 snprintf(metadata_json, metadata_json_size, 
-                        "{\"hash\":\"%s\",\"dimensions\":%u}", id_str, dimensions);
+                        "{\"hash\":\"%s\",\"dimensions\":%u,\"file_type\":\"%s\"}", id_str, dimensions, file_type);
             }
         }
     } else {
@@ -554,7 +562,7 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
         metadata_json_size = 64;
         metadata_json = (char*)malloc(metadata_json_size);
         if (metadata_json) {
-            snprintf(metadata_json, metadata_json_size, "{\"dimensions\":%u}", dimensions);
+            snprintf(metadata_json, metadata_json_size, "{\"dimensions\":%u,\"file_type\":\"%s\"}", dimensions, file_type);
         }
     }
     
@@ -563,6 +571,9 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
         metadata_json = strdup("{}");
         metadata_json_size = 2;
     }
+
+    /* Log the metadata_json string before writing to Parquet
+    DEBUG_INFO("Final metadata_json to be written to Parquet: %s", metadata_json);
 
     /* Create list array builder using the list data type */
     GArrowListArrayBuilder* list_builder = NULL;
@@ -792,6 +803,7 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
     
     /* Create file output stream for the result - we'll write to a temporary file */
     const gchar *temp_filename = "temp_parquet_data.parquet";
+    DEBUG_INFO("Opening Parquet output file for writing: %s", temp_filename);
     GArrowFileOutputStream *output_stream = garrow_file_output_stream_new(temp_filename, FALSE, &error);
     if (!output_stream) {
         DEBUG_ERROR("Failed to create file output stream: %s", error ? error->message : "Unknown error");
@@ -828,6 +840,7 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
     
     gboolean success = gparquet_arrow_file_writer_write_table(
         writer, table, 1024, &error);
+    DEBUG_INFO("Finished writing Parquet table to file: %s", temp_filename);
     g_object_unref(table);
     
     if (!success) {
@@ -839,16 +852,11 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
     }
     
     success = gparquet_arrow_file_writer_close(writer, &error);
+    DEBUG_INFO("Closed Parquet writer for file: %s", temp_filename);
     g_object_unref(writer);
     
-    if (!success) {
-        DEBUG_ERROR("Failed to close writer: %s", error ? error->message : "Unknown error");
-        if (error) g_error_free(error);
-        if (need_to_free_decompressed) free(decompressed_data);
-        return EB_ERROR_IO;
-    }
-    
     /* Read the temporary Parquet file into memory */
+    DEBUG_INFO("Opening Parquet file for reading: %s", temp_filename);
     FILE *parquet_file = fopen(temp_filename, "rb");
     if (!parquet_file) {
         DEBUG_ERROR("Failed to open temporary Parquet file");
@@ -871,6 +879,7 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
     }
     
     /* Read the Parquet data */
+    DEBUG_INFO("Reading Parquet file into memory: %s", temp_filename);
     if (fread(*dest, 1, *dest_size, parquet_file) != *dest_size) {
         DEBUG_ERROR("Failed to read temporary Parquet file");
         fclose(parquet_file);
@@ -881,11 +890,15 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
     }
     
     fclose(parquet_file);
+    DEBUG_INFO("Closed Parquet file after reading: %s", temp_filename);
     
     /* Clean up */
     if (need_to_free_decompressed) {
         free(decompressed_data);
     }
+    
+    DEBUG_INFO("Removing temporary Parquet file: %s", temp_filename);
+    remove(temp_filename);
     
     DEBUG_INFO("Successfully transformed to Pinecone-compatible Parquet format, size: %zu bytes", *dest_size);
     return EB_SUCCESS;
@@ -965,8 +978,8 @@ static eb_status_t parquet_inverse_transform(struct eb_transformer* transformer,
         return EB_ERROR_IO;
     }
         
-    /* Get the first column (we only store one column) */
-    GArrowChunkedArray *chunked_array = garrow_table_get_column_data(table, 0);
+    /* Get the 'values' column for raw payload (second column) */
+    GArrowChunkedArray *chunked_array = garrow_table_get_column_data(table, 1);
     if (!chunked_array) {
         DEBUG_ERROR("Failed to get column from table");
         g_object_unref(table);
@@ -990,7 +1003,7 @@ static eb_status_t parquet_inverse_transform(struct eb_transformer* transformer,
         return EB_ERROR_IO;
     }
     
-    /* Get the column/field type */
+    /* Get the 'values' field from schema (index 1) */
     GArrowSchema *schema = garrow_table_get_schema(table);
     if (!schema) {
         DEBUG_ERROR("Failed to get schema from table");
@@ -999,7 +1012,7 @@ static eb_status_t parquet_inverse_transform(struct eb_transformer* transformer,
         return EB_ERROR_IO;
     }
     
-    GArrowField *field = garrow_schema_get_field(schema, 0);
+    GArrowField *field = garrow_schema_get_field(schema, 1);
     if (!field) {
         DEBUG_ERROR("Failed to get field from schema");
         if (schema && G_IS_OBJECT(schema)) g_object_unref(schema);
@@ -1020,6 +1033,9 @@ static eb_status_t parquet_inverse_transform(struct eb_transformer* transformer,
     
     GArrowType type = garrow_data_type_get_id(data_type);
     
+    /* Debug: log which column and type id we're processing */
+    DEBUG_INFO("InverseTransform: column='%s', type_id=%d", garrow_field_get_name(field), type);
+
     /* Process based on type */
     if (type == GARROW_TYPE_FLOAT) {
         /* This was likely a NumPy array - need to reconstruct it */
@@ -1033,11 +1049,12 @@ static eb_status_t parquet_inverse_transform(struct eb_transformer* transformer,
             if (table && G_IS_OBJECT(table)) g_object_unref(table);
             return EB_ERROR_IO;
         }
-        
-        /* Get the data */
         int64_t length = garrow_array_get_length(array);
-        const gfloat *values = garrow_float_array_get_values(float_array, NULL);
-        if (!values) {
+        DEBUG_INFO("About to call garrow_float_array_get_values");
+        const gfloat *all_values = garrow_float_array_get_values(float_array, NULL);
+        DEBUG_INFO("Returned from garrow_float_array_get_values");
+        DEBUG_INFO("values pointer: %p", (void*)all_values);
+        if (!all_values) {
             DEBUG_ERROR("Failed to get values from float array");
             if (data_type && G_IS_OBJECT(data_type)) g_object_unref(data_type);
             if (field && G_IS_OBJECT(field)) g_object_unref(field);
@@ -1048,24 +1065,25 @@ static eb_status_t parquet_inverse_transform(struct eb_transformer* transformer,
         }
         gsize data_size = length * sizeof(gfloat);
             
-        /* Create NumPy header - this is a simplified version */
-        const char* numpy_magic = "\x93NUMPY\x01\x00";
-        guint16 header_len = 128;  /* Fixed size for simplicity */
-            
-        /* Format header with shape and dtype information */
-        char header[128];
-        snprintf(header, sizeof(header),
-                 "{'descr': '<f4', 'fortran_order': False, 'shape': (%ld,), }", 
-                 (long)length);
-                    
-        /* Pad header with spaces to reach header_len - 10 */
-        size_t header_text_len = strlen(header);
-        for (size_t i = header_text_len; i < (size_t)(header_len - 10); i++) {
-            header[i] = ' ';
+        /* Build and pad NumPy header per spec (magic+ver+len+header)%64==0 */
+        char header_buf[256];
+        memset(header_buf, ' ', sizeof(header_buf));
+        int header_text_len = snprintf(header_buf, sizeof(header_buf),
+            "{'descr': '<f4', 'fortran_order': False, 'shape': (%ld,)}",
+            (long)length);
+        int header_len = header_text_len;
+        int pad = (64 - ((10 + header_len + 1) % 64)) % 64;
+        memset(header_buf + header_text_len, ' ', pad);
+        header_len += pad;
+        header_buf[header_len] = '\n';
+        header_len += 1;
+        /* DEBUG: inspect header padding */
+        DEBUG_INFO("NumPy header build: text_len=%d, pad=%d, header_len=%d", header_text_len, pad, header_len);
+        for (int di = 0; di < 16 && di < header_len; ++di) {
+            DEBUG_INFO(" header_buf[%d] = 0x%02x", di, (unsigned char)header_buf[di]);
         }
-        header[header_len - 10 - 1] = '\n';
-            
-        /* Calculate total size needed */
+        DEBUG_INFO(" header_buf[%d] = 0x%02x (newline)", header_len - 1, (unsigned char)header_buf[header_len - 1]);
+        /* Allocate and write output: magic (8) + hdrlen (2) + header + data */
         *dest_size = 10 + header_len + data_size;
         *dest = malloc(*dest_size);
         if (!*dest) {
@@ -1077,19 +1095,15 @@ static eb_status_t parquet_inverse_transform(struct eb_transformer* transformer,
             if (table && G_IS_OBJECT(table)) g_object_unref(table);
             return EB_ERROR_MEMORY;
         }
-            
-        /* Write magic string and version */
-        memcpy(*dest, numpy_magic, 8);
-            
-        /* Write header length as uint16 */
+        /* Write magic and version */
+        memcpy(*dest, "\x93NUMPY\x01\x00", 8);
+        /* Header length field */
         guint16* header_len_ptr = (guint16*)((guint8*)*dest + 8);
-        *header_len_ptr = header_len;
-            
-        /* Write header content */
-        memcpy((guint8*)*dest + 10, header, header_len);
-            
-        /* Write data */
-        memcpy((guint8*)*dest + 10 + header_len, values, data_size);
+        *header_len_ptr = (guint16)header_len;
+        /* Copy header content */
+        memcpy((guint8*)*dest + 10, header_buf, header_len);
+        /* Copy data values */
+        memcpy((guint8*)*dest + 10 + header_len, all_values, data_size);
             
         DEBUG_INFO("Reconstructed NumPy array with %ld elements", (long)length);
     } else if (type == GARROW_TYPE_BINARY) {
@@ -1162,6 +1176,102 @@ static eb_status_t parquet_inverse_transform(struct eb_transformer* transformer,
         g_bytes_unref(value);
             
         DEBUG_INFO("Extracted binary data (%zu bytes)", *dest_size);
+    } else if (type == GARROW_TYPE_LIST) {
+        DEBUG_INFO("Entering GARROW_TYPE_LIST branch");
+        GArrowListArray *list_array = GARROW_LIST_ARRAY(array);
+        DEBUG_INFO("list_array pointer: %p", (void*)list_array);
+        if (!list_array) {
+            DEBUG_ERROR("Failed to cast to list array");
+            if (data_type && G_IS_OBJECT(data_type)) g_object_unref(data_type);
+            if (field && G_IS_OBJECT(field)) g_object_unref(field);
+            if (schema && G_IS_OBJECT(schema)) g_object_unref(schema);
+            if (array && G_IS_OBJECT(array)) g_object_unref(array);
+            if (table && G_IS_OBJECT(table)) g_object_unref(table);
+            return EB_ERROR_IO;
+        }
+        gint64 n_list = garrow_array_get_length(GARROW_ARRAY(list_array));
+        DEBUG_INFO("list_array length: %ld", (long)n_list);
+        GArrowArray *elem_array = garrow_list_array_get_value(list_array, 0);
+        DEBUG_INFO("elem_array pointer: %p", (void*)elem_array);
+        if (!elem_array) {
+            DEBUG_ERROR("Failed to get list element array");
+            if (data_type && G_IS_OBJECT(data_type)) g_object_unref(data_type);
+            if (field && G_IS_OBJECT(field)) g_object_unref(field);
+            if (schema && G_IS_OBJECT(schema)) g_object_unref(schema);
+            if (array && G_IS_OBJECT(array)) g_object_unref(array);
+            if (table && G_IS_OBJECT(table)) g_object_unref(table);
+            return EB_ERROR_IO;
+        }
+        gint64 elem_length = garrow_array_get_length(elem_array);
+        DEBUG_INFO("elem_array length: %ld", (long)elem_length);
+        GArrowFloatArray *float_array = GARROW_FLOAT_ARRAY(elem_array);
+        DEBUG_INFO("float_array pointer: %p", (void*)float_array);
+        if (!float_array) {
+            DEBUG_ERROR("Failed to cast element to float array");
+            g_object_unref(elem_array);
+            if (data_type && G_IS_OBJECT(data_type)) g_object_unref(data_type);
+            if (field && G_IS_OBJECT(field)) g_object_unref(field);
+            if (schema && G_IS_OBJECT(schema)) g_object_unref(schema);
+            if (array && G_IS_OBJECT(array)) g_object_unref(array);
+            if (table && G_IS_OBJECT(table)) g_object_unref(table);
+            return EB_ERROR_IO;
+        }
+        // Instead of using garrow_float_array_get_values (which may not be safe), extract values one by one.
+        float *values_buf = malloc(elem_length * sizeof(float));
+        if (!values_buf) {
+            DEBUG_ERROR("Failed to allocate memory for float values buffer");
+            g_object_unref(elem_array);
+            if (data_type && G_IS_OBJECT(data_type)) g_object_unref(data_type);
+            if (field && G_IS_OBJECT(field)) g_object_unref(field);
+            if (schema && G_IS_OBJECT(schema)) g_object_unref(schema);
+            if (array && G_IS_OBJECT(array)) g_object_unref(array);
+            if (table && G_IS_OBJECT(table)) g_object_unref(table);
+            return EB_ERROR_MEMORY;
+        }
+        for (gint64 i = 0; i < elem_length; i++) {
+            values_buf[i] = garrow_float_array_get_value(float_array, i);
+        }
+        // ... use values_buf instead of values ...
+        /* Build and pad NumPy header per spec (magic+ver+len+header)%64==0 */
+        char header_buf2[256];
+        memset(header_buf2, ' ', sizeof(header_buf2));
+        int header_text_len2 = snprintf(header_buf2, sizeof(header_buf2),
+            "{'descr': '<f4', 'fortran_order': False, 'shape': (%ld,)}",
+            (long)elem_length);
+        int header_len2 = header_text_len2;
+        int pad2 = (64 - ((10 + header_len2 + 1) % 64)) % 64;
+        memset(header_buf2 + header_text_len2, ' ', pad2);
+        header_len2 += pad2;
+        header_buf2[header_len2] = '\n';
+        header_len2 += 1;
+        /* DEBUG: inspect header2 padding */
+        DEBUG_INFO("NumPy header2 build: text_len2=%d, pad2=%d, header_len2=%d", header_text_len2, pad2, header_len2);
+        for (int di2 = 0; di2 < 16 && di2 < header_len2; ++di2) {
+            DEBUG_INFO(" header_buf2[%d] = 0x%02x", di2, (unsigned char)header_buf2[di2]);
+        }
+        DEBUG_INFO(" header_buf2[%d] = 0x%02x (newline)", header_len2 - 1, (unsigned char)header_buf2[header_len2 - 1]);
+        /* Allocate and write output: magic (8) + hdrlen (2) + header + data */
+        gsize data_size2 = elem_length * sizeof(float);
+        *dest_size = 10 + header_len2 + data_size2;
+        *dest = malloc(*dest_size);
+        if (!*dest) {
+            DEBUG_ERROR("Failed to allocate memory for NumPy output");
+            free(values_buf);
+            g_object_unref(elem_array);
+            return EB_ERROR_MEMORY;
+        }
+        /* Write magic and version */
+        memcpy(*dest, "\x93NUMPY\x01\x00", 8);
+        /* Header length field */
+        guint16 *hdr_len_ptr = (guint16*)((guint8*)*dest + 8);
+        *hdr_len_ptr = (guint16)header_len2;
+        /* Copy header content */
+        memcpy((guint8*)*dest + 10, header_buf2, header_len2);
+        /* Copy data values */
+        memcpy((guint8*)*dest + 10 + header_len2, values_buf, data_size2);
+        DEBUG_INFO("Reconstructed NumPy array from list with %ld elements", (long)elem_length);
+        free(values_buf);
+        g_object_unref(elem_array);
     } else {
         DEBUG_ERROR("Unsupported data type in Parquet file: %d", type);
         if (data_type && G_IS_OBJECT(data_type)) g_object_unref(data_type);
@@ -1339,45 +1449,23 @@ static eb_status_t parquet_inverse_transform(struct eb_transformer* transformer,
     if (hash_str) {
         DEBUG_INFO("Writing metadata to .meta file for hash %s", hash_str);
         
-        /* Try to write metadata to a .meta file */
+        /* Write metadata file under .embr/objects in the repo root */
         char meta_path[PATH_MAX] = {0};
-        
-        /* Try current directory first */
-        snprintf(meta_path, sizeof(meta_path), "%s.meta", hash_str);
-        
-        FILE* meta_file = fopen(meta_path, "w");
-        if (!meta_file) {
-            /* Try in .embr/objects directory */
-            char repo_root[PATH_MAX] = {0};
-            char* eb_dir = getenv("EB_DIR");
-            if (eb_dir) {
-                strncpy(repo_root, eb_dir, PATH_MAX - 1);
-            } else {
-                /* Use current directory as fallback */
-                if (!getcwd(repo_root, PATH_MAX - 1)) {
-                    DEBUG_WARN("Failed to get current directory, skipping metadata save");
-                    goto cleanup_metadata;
-                }
-            }
-            
-            /* Create .embr/objects directory if it doesn't exist */
+        char *repo_root = find_repo_root(NULL);
+        if (repo_root) {
             char objects_dir[PATH_MAX];
             snprintf(objects_dir, sizeof(objects_dir), "%s/.embr/objects", repo_root);
-            
-            /* Try to create directory (ignore errors) */
-            #if defined(_WIN32)
-            mkdir(objects_dir);
-            #else
-            mkdir(objects_dir, 0755);
-            #endif
-            
-            snprintf(meta_path, sizeof(meta_path), "%s/.embr/objects/%s.meta", repo_root, hash_str);
-            meta_file = fopen(meta_path, "w");
-            
-            if (!meta_file) {
-                DEBUG_WARN("Failed to open metadata file for writing at %s", meta_path);
-                goto cleanup_metadata;
-            }
+            mkdir(objects_dir, 0755); /* ignore errors */
+            snprintf(meta_path, sizeof(meta_path), "%s/%s.meta", objects_dir, hash_str);
+            free(repo_root);
+        } else {
+            /* Fallback to current directory if repo root not found */
+            snprintf(meta_path, sizeof(meta_path), "%s.meta", hash_str);
+        }
+        FILE *meta_file = fopen(meta_path, "w");
+        if (!meta_file) {
+            DEBUG_WARN("Failed to open metadata file for writing at %s", meta_path);
+            goto cleanup_metadata;
         }
         
         /* Write metadata */
@@ -1394,7 +1482,7 @@ static eb_status_t parquet_inverse_transform(struct eb_transformer* transformer,
         }
         
         if (model_str) {
-            fprintf(meta_file, "provider=%s\n", model_str);
+            fprintf(meta_file, "model=%s\n", model_str);
         }
         
         if (dimensions_str) {
@@ -1472,4 +1560,53 @@ eb_status_t eb_register_parquet_transformer(void) {
     
     DEBUG_INFO("Parquet transformer registered successfully");
     return EB_SUCCESS;
+}
+
+/*
+ * Extract the metadata JSON string from the 'metadata' column of a Parquet file buffer.
+ * Returns a malloc'd string (caller must free), or NULL on error.
+ */
+char *eb_parquet_extract_metadata_json(const void *parquet_data, size_t parquet_size) {
+    if (!parquet_data || parquet_size == 0) return NULL;
+    // Log the first and last 4 bytes (Parquet magic bytes)
+    if (parquet_size >= 8) {
+        const unsigned char *bytes = (const unsigned char *)parquet_data;
+        DEBUG_INFO("Parquet buffer first 4 bytes: %02x %02x %02x %02x", bytes[0], bytes[1], bytes[2], bytes[3]);
+        DEBUG_INFO("Parquet buffer last 4 bytes: %02x %02x %02x %02x", bytes[parquet_size-4], bytes[parquet_size-3], bytes[parquet_size-2], bytes[parquet_size-1]);
+    } else {
+        DEBUG_WARN("Parquet buffer too small to check magic bytes (size=%zu)", parquet_size);
+    }
+    GError *error = NULL;
+    const gchar *temp_filename = "temp_extract_metadata.parquet";
+    FILE *temp_file = fopen(temp_filename, "wb");
+    if (!temp_file) return NULL;
+    size_t written = fwrite(parquet_data, 1, parquet_size, temp_file);
+    fclose(temp_file);
+    if (written != parquet_size) { remove(temp_filename); return NULL; }
+    GArrowMemoryMappedInputStream *input_stream = garrow_memory_mapped_input_stream_new(temp_filename, &error);
+    if (!input_stream) { remove(temp_filename); return NULL; }
+    GParquetArrowFileReader *reader = gparquet_arrow_file_reader_new_arrow(GARROW_SEEKABLE_INPUT_STREAM(input_stream), &error);
+    if (!reader) { g_object_unref(input_stream); remove(temp_filename); return NULL; }
+    GArrowTable *table = gparquet_arrow_file_reader_read_table(reader, &error);
+    g_object_unref(reader); g_object_unref(input_stream); remove(temp_filename);
+    if (!table) return NULL;
+    gint metadata_col_index = garrow_table_get_n_columns(table) > 2 ? 2 : -1;
+    char *result = NULL;
+    if (metadata_col_index >= 0) {
+        GArrowChunkedArray *metadata_chunked = garrow_table_get_column_data(table, metadata_col_index);
+        if (metadata_chunked && garrow_chunked_array_get_n_chunks(metadata_chunked) > 0) {
+            GArrowArray *metadata_array = garrow_chunked_array_get_chunk(metadata_chunked, 0);
+            if (metadata_array) {
+                GArrowStringArray *metadata_string_array = GARROW_STRING_ARRAY(metadata_array);
+                if (metadata_string_array) {
+                    const gchar *metadata_json = garrow_string_array_get_string(metadata_string_array, 0);
+                    if (metadata_json) result = strdup(metadata_json);
+                }
+                g_object_unref(metadata_array);
+            }
+            g_object_unref(metadata_chunked);
+        }
+    }
+    g_object_unref(table);
+    return result;
 } 

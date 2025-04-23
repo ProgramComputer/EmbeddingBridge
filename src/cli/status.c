@@ -125,10 +125,9 @@ static char* get_metadata(const char* root, const char* hash)
 
 // Get log entries
 static char* get_history(const char* root, const char* source, const char* model_filter) {
-	char log_path[MAX_PATH_LEN];
-	snprintf(log_path, sizeof(log_path), "%s/.embr/log", root);
-
+	char* log_path = get_current_set_log_path();
 	FILE *f = fopen(log_path, "r");
+	free(log_path);
 	if (!f) return NULL;
 
 	char *history = malloc(MAX_LINE_LEN);
@@ -158,7 +157,7 @@ static char* get_history(const char* root, const char* source, const char* model
 			// Check if we have provider info (new format)
 			bool has_provider = (parsed == 4 && provider[0] != '\0');
 			
-			DEBUG_PRINT("Parsed log line: file=%s hash=%s timestamp=%s provider=%s format=%s", 
+			DEBUG_PRINT("Parsed log line: file=%s hash=%s timestamp=%s model=%s format=%s", 
 				file, hash, timestamp, has_provider ? provider : "none", 
 				has_provider ? "new" : "old");
 			
@@ -268,11 +267,11 @@ static void print_status(const char* root, const char* current, const char* hist
             }
             
             // Extract provider from metadata
-            char *provider_line = strstr(metadata, "provider=");
+            char *provider_line = strstr(metadata, "model=");
             if (provider_line) {
                 DEBUG_PRINT("print_status: Provider found in metadata");
                 char provider[32] = {0};
-                if (sscanf(provider_line, "provider=%31s", provider) == 1) {
+                if (sscanf(provider_line, "model=%31s", provider) == 1) {
                     printf("  Provider: %s\n", provider);
                 }
             } else {
@@ -318,11 +317,11 @@ static void print_status(const char* root, const char* current, const char* hist
                 printf("\n     %s", hash_meta);
                 
                 // Extract provider from metadata
-                char *provider_line = strstr(hash_meta, "provider=");
+                char *provider_line = strstr(hash_meta, "model=");
                 if (provider_line) {
                     DEBUG_PRINT("print_status: Provider found in token metadata");
                     char provider[32] = {0};
-                    if (sscanf(provider_line, "provider=%31s", provider) == 1) {
+                    if (sscanf(provider_line, "model=%31s", provider) == 1) {
                         printf("     Provider: %s\n", provider);
                     }
                 } else {
@@ -352,11 +351,11 @@ static void print_status(const char* root, const char* current, const char* hist
         char *metadata = get_metadata(root, current);
         if (metadata) {
             DEBUG_PRINT("print_status: Metadata found, length=%zu", strlen(metadata));
-            char *provider_line = strstr(metadata, "provider=");
+            char *provider_line = strstr(metadata, "model=");
             if (provider_line) {
                 DEBUG_PRINT("print_status: Provider found in metadata");
                 char provider[32] = {0};
-                if (sscanf(provider_line, "provider=%31s", provider) == 1) {
+                if (sscanf(provider_line, "model=%31s", provider) == 1) {
                     printf("Provider: %s\n", provider);
                 }
             } else {
@@ -451,11 +450,9 @@ static int show_status(char** rel_paths, size_t num_paths, const char* repo_root
             DEBUG_PRINT("show_status: No model filter, checking all models in log");
             
             // First, get the log file path
-            char log_path[PATH_MAX];
-            snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
-            
-            // Try to open the log file
+            char* log_path = get_current_set_log_path();
             FILE* fp = fopen(log_path, "r");
+            free(log_path);
             if (!fp) {
                 DEBUG_PRINT("show_status: Could not open log file");
                 fprintf(stderr, "No embedding log found for %s\n", rel_paths[i]);
@@ -601,17 +598,8 @@ int cmd_status(int argc, char* argv[])
         return 1;
     }
 
-    // Get absolute path of source file
-    char source_abs[PATH_MAX];
-    if (!realpath(source, source_abs)) {
-        DEBUG_PRINT("cmd_status: Cannot resolve path: %s", source);
-        fprintf(stderr, "Error: Cannot resolve path: %s\n", source);
-        return 1;
-    }
-    DEBUG_PRINT("cmd_status: Resolved path: %s", source_abs);
-
-    // Get repository root from source path directly
-    char *repo_root = find_repo_root(source_abs);
+    // Find repository root from current working directory
+    char *repo_root = find_repo_root(NULL);
     if (!repo_root) {
         DEBUG_PRINT("cmd_status: Not in an eb repository");
         fprintf(stderr, "Error: Not in an eb repository\n");
@@ -619,25 +607,15 @@ int cmd_status(int argc, char* argv[])
     }
     DEBUG_PRINT("cmd_status: Found repository root: %s", repo_root);
 
-    // Get relative path using resolved paths
-    char *rel_path = get_relative_path(source_abs, repo_root);
+    // Use the source argument as relative path
+    char *rel_path = strdup(source);
     if (!rel_path) {
-        DEBUG_PRINT("cmd_status: File must be within repository");
-        fprintf(stderr, "Error: File must be within repository\n");
+        DEBUG_PRINT("cmd_status: Memory allocation failed");
+        fprintf(stderr, "Error: Memory allocation failed\n");
         free(repo_root);
         return 1;
     }
     DEBUG_PRINT("cmd_status: Relative path: %s", rel_path);
-
-    // Now check if file exists
-    struct stat st;
-    if (stat(source_abs, &st) != 0) {
-        DEBUG_PRINT("cmd_status: No embeddings found for %s", rel_path);
-        fprintf(stderr, "No embeddings found for %s\n", rel_path);
-        free(rel_path);
-        free(repo_root);
-        return 1;
-    }
 
     // Create paths array with just the necessary arguments
     int new_argc = 0;

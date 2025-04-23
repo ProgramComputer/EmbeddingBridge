@@ -225,19 +225,19 @@ eb_status_t eb_git_install_hooks(bool force) {
             "# eb hook: This is a managed hook. Edit with caution.\n"
             "\n"
             "# Check if hook is enabled\n"
-            "if ! eb config get git.hooks.%s.enabled >/dev/null 2>&1 || \\\n"
-            "   [ \"$(eb config get git.hooks.%s.enabled)\" = \"false\" ]; then\n"
+            "if ! embr config get git.hooks.%s.enabled >/dev/null 2>&1 || \\\n"
+            "   [ \"$(embr config get git.hooks.%s.enabled)\" = \"false\" ]; then\n"
             "    exit 0  # Hook disabled, skip silently\n"
             "fi\n"
             "\n"
             "# Get verbosity setting\n"
-            "verbose=$(eb config get git.hooks.%s.verbose 2>/dev/null)\n"
+            "verbose=$(embr config get git.hooks.%s.verbose 2>/dev/null)\n"
             "\n"
             "# Run eb hook command\n"
-            "[ \"$verbose\" = \"true\" ] && echo \"eb: Running %s hook\"\n"
+            "[ \"$verbose\" = \"true\" ] && echo \"embr: Running %s hook\"\n"
             "eb hooks run %s \"$@\" || {\n"
-            "    echo \"eb: %s hook failed\"\n"
-            "    echo \"hint: Use 'eb config set git.hooks.%s.enabled false' to disable this hook\"\n"
+            "    echo \"embr: %s hook failed\"\n"
+            "    echo \"hint: Use 'embr config set git.hooks.%s.enabled false' to disable this hook\"\n"
             "    exit 1\n"
             "}\n"
             "exit 0\n";
@@ -383,7 +383,7 @@ eb_status_t eb_git_get_hook_status(eb_git_hook_status_t** out_status, size_t* ou
 
         // Get configuration
         char cmd[256];
-        snprintf(cmd, sizeof(cmd), "eb config get git.hooks.%s.enabled 2>/dev/null", hooks[i]);
+        snprintf(cmd, sizeof(cmd), "embr config get git.hooks.%s.enabled 2>/dev/null", hooks[i]);
         fp = popen(cmd, "r");
         if (fp) {
             char result[32];
@@ -395,7 +395,7 @@ eb_status_t eb_git_get_hook_status(eb_git_hook_status_t** out_status, size_t* ou
             pclose(fp);
         }
 
-        snprintf(cmd, sizeof(cmd), "eb config get git.hooks.%s.verbose 2>/dev/null", hooks[i]);
+        snprintf(cmd, sizeof(cmd), "embr config get git.hooks.%s.verbose 2>/dev/null", hooks[i]);
         fp = popen(cmd, "r");
         if (fp) {
             char result[32];

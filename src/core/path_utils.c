@@ -1,3 +1,5 @@
+#include "../core/types.h"
+#include "../cli/set.h"
 #include "path_utils.h"
 #include "debug.h"
 #include <stdlib.h>
@@ -5,6 +7,8 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <stdio.h>
+#include <errno.h>
+#include <limits.h>
 
 char* find_repo_root(const char* start_path) {
     char current_path[PATH_MAX];
@@ -381,4 +385,95 @@ int parse_s3_url(const char *url, char **bucket_out, char **prefix_out, char **r
 	}
 	
 	return 0;
+}
+
+/**
+ * Get the path to the current set's log file: .embr/sets/<set>/log
+ * Caller is responsible for freeing.
+ */
+char* get_current_set_log_path(void) {
+    // Determine repo root
+    char* eb_root = find_repo_root(NULL);
+    if (!eb_root) {
+        return NULL;
+    }
+    
+    // Get current set name
+    char set_name[PATH_MAX];
+    eb_status_t status = get_current_set(set_name, sizeof(set_name));
+    if (status != EB_SUCCESS) {
+        free(eb_root);
+        return NULL;
+    }
+    
+    // Build path: <root>/.embr/sets/<set>/log
+    size_t len = strlen(eb_root) + strlen("/.embr/sets//log") + strlen(set_name) + 1;
+    char* path = malloc(len);
+    if (!path) {
+        free(eb_root);
+        return NULL;
+    }
+    snprintf(path, len, "%s/.embr/sets/%s/log", eb_root, set_name);
+    free(eb_root);
+    return path;
+}
+
+/**
+ * Get the path to the current set's index file: .embr/sets/<set>/index
+ * Caller is responsible for freeing.
+ */
+char* get_current_set_index_path(void) {
+    // Determine repo root
+    char* eb_root = find_repo_root(NULL);
+    if (!eb_root) {
+        return NULL;
+    }
+    
+    // Get current set name
+    char set_name[PATH_MAX];
+    eb_status_t status = get_current_set(set_name, sizeof(set_name));
+    if (status != EB_SUCCESS) {
+        free(eb_root);
+        return NULL;
+    }
+    
+    // Build path: <root>/.embr/sets/<set>/index
+    size_t len = strlen(eb_root) + strlen("/.embr/sets//index") + strlen(set_name) + 1;
+    char* path = malloc(len);
+    if (!path) {
+        free(eb_root);
+        return NULL;
+    }
+    snprintf(path, len, "%s/.embr/sets/%s/index", eb_root, set_name);
+    free(eb_root);
+    return path;
+}
+
+/**
+ * Get the path to the current set's refs/models directory: .embr/sets/<set>/refs/models
+ * Caller is responsible for freeing.
+ */
+char* get_current_set_model_refs_dir(void) {
+    // Determine repo root
+    char* eb_root = find_repo_root(NULL);
+    if (!eb_root) {
+        return NULL;
+    }
+    // Get current set name
+    char set_name[PATH_MAX];
+    eb_status_t status = get_current_set(set_name, sizeof(set_name));
+    if (status != EB_SUCCESS) {
+        free(eb_root);
+        return NULL;
+    }
+    // Build path: <root>/.embr/sets/<set>/refs/models
+    size_t len = strlen(eb_root) + strlen("/.embr/sets//refs/models") + strlen(set_name) + 1;
+    char* path = malloc(len);
+    if (!path) {
+        free(eb_root);
+        return NULL;
+    }
+    snprintf(path, len, "%s/.embr/sets/%s/refs/models", eb_root, set_name);
+    free(eb_root);
+    return path;
 } 

@@ -10,7 +10,6 @@ A command-line tool for managing and versioning embedding vectors. Think of it a
 - Roll back to previous embedding versions
 - Support for multiple embedding models
 - Organize embeddings into sets for better management
-- Prepare for remote collaboration (coming soon)
 
 ## Installation
 
@@ -18,6 +17,25 @@ A command-line tool for managing and versioning embedding vectors. Think of it a
 make clean
 make all
 make install
+```
+
+### From release
+
+```bash
+# Download the release archive (tar.gz or zip):
+#   tar -xzf embedding_bridge-<version>.tar.gz
+#   # or
+#   unzip embedding_bridge-<version>.zip
+#   cd embedding_bridge-<version>
+
+# Create a short-name `embr` launcher in this folder (symlink to the wrapper):
+ln -s run_embedding_bridge.sh embr
+
+# Add the release directory to your PATH so you can invoke the launcher:
+export PATH="$PWD:$PATH"
+
+# Now run the CLI (the wrapper will set LD_LIBRARY_PATH for you):
+embr --help
 ```
 
 ## Quick Start
@@ -43,7 +61,7 @@ embr rollback <hash> document.txt
 
 # Create and manage sets
 embr set create experimental
-embr set switch experimental
+embr switch experimental
 ```
 
 ## Core Commands
@@ -74,19 +92,22 @@ embr diff <hash1> <hash2>
 
 # Roll back to previous version
 embr rollback <hash> file.txt
+
+# View embedding log
+embr log file.txt
 ```
 
 ### Set Management
 ```bash
 # Create a new set of embeddings
-embr set create <name> [--desc="Description"] [--base=<base-set>]
+embr set create <name>
 
 # List available sets
 embr set list
 embr set list --verbose
 
 # Switch between sets
-embr set switch <name>
+embr switch <name>
 
 # Show current set status
 embr set status
@@ -94,26 +115,45 @@ embr set status
 # Compare differences between sets
 embr set diff <set1> <set2>
 
-# Merge sets (future functionality)
-embr set merge <source-set> [--target=<target-set>] [--strategy=<strategy>]
-
 # Delete a set
-embr set delete <name> [--force]
+embr set -d <name> [--force]
 ```
 
-### Remote Operations (Future Functionality)
+### Merge Sets
+```bash
+# Merge embeddings from one set to another
+embr merge <source-set> [<target-set>] [--strategy=<strategy>]
+```
+
+### Remote Operations
 ```bash
 # Add a remote
 embr remote add <name> <url>
 
-# List remote sets
-embr remote sets <remote>
+# List remotes
+embr remote list
 
 # Push a set to remote
-embr remote push <set-name> [remote]
+embr push <remote> [<set>]
 
 # Pull a set from remote
-embr remote pull <set-name> [remote]
+embr pull <remote> [<set>]
+```
+
+### Other Useful Commands
+```bash
+# Download a file or directory from a repository
+embr get <remote> <path>
+
+# Garbage collect unreferenced embeddings
+embr gc [options]
+# Example: dry run
+enbr gc -n
+
+# Remove embeddings from tracking
+embr rm file.txt
+embr rm --cached file.txt
+embr rm -m openai-3 file.txt
 ```
 
 ## Contributing

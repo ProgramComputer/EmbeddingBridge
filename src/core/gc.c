@@ -130,11 +130,16 @@ eb_status_t gc_run(const char* prune_expire, bool aggressive, eb_gc_result_t* re
 
 	/* Get objects directory path */
 	char objects_dir[PATH_MAX];
-	snprintf(objects_dir, sizeof(objects_dir), "%s/objects", repo_path);
+	snprintf(objects_dir, sizeof(objects_dir), "%s/.embr/objects", repo_path);
+
+	/* Debug output for diagnosis */
+	struct stat st;
+	DEBUG_PRINT("gc_run: Checking objects_dir: %s", objects_dir);
+	int stat_result = stat(objects_dir, &st);
+	DEBUG_PRINT("gc_run: stat() result: %d, errno: %d (%s)", stat_result, errno, strerror(errno));
 
 	/* Check if objects directory exists */
-	struct stat st;
-	if (stat(objects_dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
+	if (stat_result != 0 || !S_ISDIR(st.st_mode)) {
 		if (result) {
 			result->status = EB_ERROR_NOT_INITIALIZED;
 			sprintf(result->message, "Objects directory not found");
@@ -149,7 +154,6 @@ eb_status_t gc_run(const char* prune_expire, bool aggressive, eb_gc_result_t* re
 	
 	if (result) {
 		result->objects_removed = removed;
-		sprintf(result->message, "Removed %d unreferenced embedding objects", removed);
 	}
 
 	/* Additional aggressive optimization if requested */
@@ -244,7 +248,7 @@ eb_status_t gc_find_unreferenced(char** unreferenced_out,
 	
 	/* Get objects directory path */
 	char objects_dir[PATH_MAX];
-	snprintf(objects_dir, sizeof(objects_dir), "%s/objects", repo_path);
+	snprintf(objects_dir, sizeof(objects_dir), "%s/.embr/objects", repo_path);
 	
 	/* Check if objects directory exists */
 	struct stat st;
@@ -416,57 +420,85 @@ static bool is_referenced(const char* object_id)
 	char* repo_path = get_repository_path();
 	if (!repo_path)
 		return false;
-	
+
 	/* Get sets directory path */
 	char sets_dir[PATH_MAX];
 	snprintf(sets_dir, sizeof(sets_dir), "%s/sets", repo_path);
-	
+
 	/* Check if sets directory exists */
 	struct stat st;
 	if (stat(sets_dir, &st) != 0 || !S_ISDIR(st.st_mode)) {
 		free(repo_path);
 		return false;
 	}
-	
+
 	/* Iterate through all sets */
 	DIR* dir = opendir(sets_dir);
 	if (!dir) {
 		free(repo_path);
 		return false;
 	}
-	
-	/* For each set, check if it references the object */
+
 	struct dirent* entry;
 	bool referenced = false;
-	
+
 	while ((entry = readdir(dir)) != NULL && !referenced) {
 		if (entry->d_name[0] == '.')
 			continue;
-		
+
 		char set_dir[PATH_MAX];
 		snprintf(set_dir, sizeof(set_dir), "%s/sets/%s", repo_path, entry->d_name);
-		
+
 		/* Check if it's a directory */
 		if (stat(set_dir, &st) == 0 && S_ISDIR(st.st_mode)) {
-			/* TODO: In a real implementation, check reference files within the set
-			 * to determine if the object_id is referenced.
-			 * 
-			 * For now, we'll simulate by checking if there's a file with the object_id
-			 * in the set directory
-			 */
-			
+			/* 1. Check log file for object_id as the second field */
+			char log_path[PATH_MAX];
+			snprintf(log_path, sizeof(log_path), "%s/log", set_dir);
+			FILE* log_fp = fopen(log_path, "r");
+			if (log_fp) {
+				char line[2048];
+				while (fgets(line, sizeof(line), log_fp)) {
+					char ts[32], hash[65];
+					if (sscanf(line, "%31s %64s", ts, hash) == 2) {
+						if (strcmp(hash, object_id) == 0) {
+							referenced = true;
+							break;
+						}
+					}
+				}
+				fclose(log_fp);
+			}
+		}
+	}
+
+	closedir(dir);
+
+	if (referenced) {
+		free(repo_path);
+		return true;
+	}
+
+	/* Fallback: check refs as before */
+	dir = opendir(sets_dir);
+	if (!dir) {
+		free(repo_path);
+		return false;
+	}
+	while ((entry = readdir(dir)) != NULL && !referenced) {
+		if (entry->d_name[0] == '.')
+			continue;
+		char set_dir[PATH_MAX];
+		snprintf(set_dir, sizeof(set_dir), "%s/sets/%s", repo_path, entry->d_name);
+		if (stat(set_dir, &st) == 0 && S_ISDIR(st.st_mode)) {
 			char reference_path[PATH_MAX];
 			snprintf(reference_path, sizeof(reference_path), "%s/refs/%s", set_dir, object_id);
-			
 			if (stat(reference_path, &st) == 0) {
 				referenced = true;
 			}
 		}
 	}
-	
 	closedir(dir);
 	free(repo_path);
-	
 	return referenced;
 }
 

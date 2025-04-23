@@ -63,19 +63,10 @@ eb_transport_t *transport_open(const char *url)
 	}
 	
 	/* Determine transport type based on URL */
-	if (starts_with(url, "ssh://") || strchr(url, '@')) {
-		transport->type = TRANSPORT_SSH;
-		transport->ops = &ssh_ops;
-		DEBUG_PRINT("transport_open: Using SSH transport for %s", url);
-	} else if (starts_with(url, "http://") || starts_with(url, "https://")) {
-		transport->type = TRANSPORT_HTTP;
-		transport->ops = &http_ops;
-		DEBUG_PRINT("transport_open: Using HTTP transport for %s", url);
-	} else if (starts_with(url, "s3://")) {
+	if (starts_with(url, "s3://")) {
 		transport->type = TRANSPORT_S3;
 		transport->ops = &s3_ops;
 		DEBUG_PRINT("transport_open: Using S3 transport for %s", url);
-		
 		#ifndef EB_HAVE_AWS
 		DEBUG_PRINT("transport_open: S3 support is not compiled in");
 		snprintf(transport->error_msg, sizeof(transport->error_msg),
@@ -87,13 +78,39 @@ eb_transport_t *transport_open(const char *url)
 		#endif
 	} else if (starts_with(url, "file://") || !strchr(url, ':')) {
 		transport->type = TRANSPORT_LOCAL;
-		transport->ops = &local_ops;
-		DEBUG_PRINT("transport_open: Using local transport for %s", url);
+		transport->ops = NULL;
+		DEBUG_PRINT("transport_open: file:// and local transports are not implemented");
+		snprintf(transport->error_msg, sizeof(transport->error_msg),
+			 "file:// and local transports are not implemented. Only s3:// is supported.");
+		transport->last_error = EB_ERROR_NOT_IMPLEMENTED;
+		free((void *)transport->url);
+		free(transport);
+		return NULL;
+	} else if (starts_with(url, "ssh://") || strchr(url, '@')) {
+		transport->type = TRANSPORT_SSH;
+		transport->ops = NULL;
+		DEBUG_PRINT("transport_open: SSH transport is not implemented");
+		snprintf(transport->error_msg, sizeof(transport->error_msg),
+			 "SSH transport is not implemented. Only s3:// is supported.");
+		transport->last_error = EB_ERROR_NOT_IMPLEMENTED;
+		free((void *)transport->url);
+		free(transport);
+		return NULL;
+	} else if (starts_with(url, "http://") || starts_with(url, "https://")) {
+		transport->type = TRANSPORT_HTTP;
+		transport->ops = NULL;
+		DEBUG_PRINT("transport_open: HTTP transport is not implemented");
+		snprintf(transport->error_msg, sizeof(transport->error_msg),
+			 "HTTP transport is not implemented. Only s3:// is supported.");
+		transport->last_error = EB_ERROR_NOT_IMPLEMENTED;
+		free((void *)transport->url);
+		free(transport);
+		return NULL;
 	} else {
 		transport->type = TRANSPORT_UNKNOWN;
 		DEBUG_PRINT("transport_open: Unsupported URL scheme: %s", url);
 		snprintf(transport->error_msg, sizeof(transport->error_msg),
-			 "Unsupported URL scheme: %s", url);
+			 "Unsupported URL scheme: %s. Only s3:// is supported.", url);
 		transport->last_error = EB_ERROR_UNSUPPORTED;
 		free((void *)transport->url);
 		free(transport);
@@ -196,12 +213,12 @@ int transport_disconnect(eb_transport_t *transport)
 	return result;
 }
 
-int transport_send_data(eb_transport_t *transport, const void *data, size_t size)
+int transport_send_data(eb_transport_t *transport, const void *data, size_t size, const char *hash)
 {
 	int result;
 	
-	DEBUG_INFO("transport_send_data: Starting with transport=%p, data=%p, size=%zu", 
-	         transport, data, size);
+	DEBUG_INFO("transport_send_data: Starting with transport=%p, data=%p, size=%zu, hash=%s", 
+	         transport, data, size, hash ? hash : "(null)");
 	
 	if (!transport || !data)
 		return EB_ERROR_INVALID_PARAMETER;
@@ -221,7 +238,7 @@ int transport_send_data(eb_transport_t *transport, const void *data, size_t size
 	
 	DEBUG_INFO("transport_send_data: Calling transport->ops->send_data function at %p", 
 	         transport->ops->send_data);
-	result = transport->ops->send_data(transport, data, size);
+	result = transport->ops->send_data(transport, data, size, hash);
 	DEBUG_INFO("transport_send_data: Result=%d", result);
 	
 	if (result != EB_SUCCESS)
@@ -282,6 +299,31 @@ int transport_list_refs(eb_transport_t *transport, char ***refs, size_t *count)
 	if (result != EB_SUCCESS)
 		transport->last_error = result;
 	
+	return result;
+}
+
+int transport_delete_refs(eb_transport_t *transport, const char **refs, size_t count)
+{
+	int result;
+	if (!transport || !refs || count == 0)
+		return EB_ERROR_INVALID_PARAMETER;
+
+	if (!transport->connected) {
+		result = transport_connect(transport);
+		if (result != EB_SUCCESS)
+			return result;
+	}
+
+	if (!transport->ops || !transport->ops->delete_refs) {
+		transport->last_error = EB_ERROR_NOT_IMPLEMENTED;
+		snprintf(transport->error_msg, sizeof(transport->error_msg),
+			 "Delete operation not implemented for this transport");
+		return EB_ERROR_NOT_IMPLEMENTED;
+	}
+
+	result = transport->ops->delete_refs(transport, refs, count);
+	if (result != EB_SUCCESS)
+		transport->last_error = result;
 	return result;
 }
 

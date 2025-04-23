@@ -913,7 +913,8 @@ eb_status_t eb_remote_push(
     const char *remote_name,
     const void *data,
     size_t size,
-    const char *path) {
+    const char *path,
+    const char *hash) {
     
     DEBUG_PRINT("eb_remote_push: Starting with remote=%s, size=%zu, path=%s", 
                remote_name ? remote_name : "(null)", 
@@ -1043,7 +1044,7 @@ eb_status_t eb_remote_push(
             transport->data_is_precompressed = false;
             DEBUG_WARN("Setting data_is_precompressed flag to FALSE");
             
-            result = transport_send_data(transport, compressed_data, compressed_size);
+            result = transport_send_data(transport, compressed_data, compressed_size, hash);
             
             DEBUG_INFO("transport_send_data returned: %d", result);
             
@@ -1118,7 +1119,7 @@ eb_status_t eb_remote_push(
             header_len_bytes[3] = header_len & 0xFF;
             
             /* Send header length */
-            result = transport_send_data(transport, header_len_bytes, 4);
+            result = transport_send_data(transport, header_len_bytes, 4, NULL);
             if (result != EB_SUCCESS) {
                 DEBUG_ERROR("Failed to send batch header length: %s", 
                           transport_get_error(transport));
@@ -1130,7 +1131,7 @@ eb_status_t eb_remote_push(
             }
             
             /* Send header */
-            result = transport_send_data(transport, batch_header, header_len);
+            result = transport_send_data(transport, batch_header, header_len, NULL);
             if (result != EB_SUCCESS) {
                 DEBUG_ERROR("Failed to send batch header: %s", 
                           transport_get_error(transport));
@@ -1144,7 +1145,7 @@ eb_status_t eb_remote_push(
             /* Send the compressed batch with retries */
             int retry_count = 0;
             while (retry_count < MAX_RETRIES) {
-                result = transport_send_data(transport, compressed_batch, compressed_size);
+                result = transport_send_data(transport, compressed_batch, compressed_size, NULL);
                 if (result == EB_SUCCESS) {
                     break;
                 }
@@ -1193,7 +1194,7 @@ eb_status_t eb_remote_push(
         
         /* Send end marker */
         const char *end_marker = "END";
-        result = transport_send_data(transport, end_marker, strlen(end_marker));
+        result = transport_send_data(transport, end_marker, strlen(end_marker), NULL);
         if (result != EB_SUCCESS) {
             DEBUG_ERROR("Failed to send end marker: %s", 
                       transport_get_error(transport));
@@ -1517,7 +1518,7 @@ eb_status_t eb_remote_prune(
     
     /* Send prune command */
     const char *prune_cmd = "PRUNE";
-    eb_status_t result = transport_send_data(transport, prune_cmd, strlen(prune_cmd));
+    eb_status_t result = transport_send_data(transport, prune_cmd, strlen(prune_cmd), NULL);
     if (result != EB_SUCCESS) {
         DEBUG_ERROR("Failed to send prune command: %s", 
                   transport_get_error(transport));
@@ -1832,7 +1833,8 @@ eb_status_t eb_remote_resume_push(
     const char *remote_name,
     const void *data,
     size_t size,
-    const char *path) {
+    const char *path,
+    const char *hash) {
     
     /* Check if we can resume */
     size_t resume_pos = get_resume_position(remote_name, path, 0, data, size);
@@ -1840,7 +1842,7 @@ eb_status_t eb_remote_resume_push(
     if (resume_pos == 0) {
         /* Can't resume, start a new operation */
         DEBUG_INFO("Cannot resume push operation, starting new transfer");
-        return eb_remote_push(remote_name, data, size, path);
+        return eb_remote_push(remote_name, data, size, path, hash);
     }
     
     DEBUG_INFO("Resuming push operation from position %zu/%zu (%.1f%%)", 
@@ -1907,7 +1909,7 @@ eb_status_t eb_remote_resume_push(
              "RESUME %zu/%zu FROM %zu TOTAL %zu", 
              batch_number, total_batches, resume_pos, size);
     
-    result = transport_send_data(transport, resume_header, strlen(resume_header));
+    result = transport_send_data(transport, resume_header, strlen(resume_header), NULL);
     if (result != EB_SUCCESS) {
         DEBUG_ERROR("Failed to send resume header: %s", 
                   transport_get_error(transport));
@@ -1952,7 +1954,7 @@ eb_status_t eb_remote_resume_push(
         header_len_bytes[3] = header_len & 0xFF;
         
         /* Send header length */
-        result = transport_send_data(transport, header_len_bytes, 4);
+        result = transport_send_data(transport, header_len_bytes, 4, NULL);
         if (result != EB_SUCCESS) {
             DEBUG_ERROR("Failed to send batch header length: %s", 
                       transport_get_error(transport));
@@ -1963,7 +1965,7 @@ eb_status_t eb_remote_resume_push(
         }
         
         /* Send header */
-        result = transport_send_data(transport, batch_header, header_len);
+        result = transport_send_data(transport, batch_header, header_len, NULL);
         if (result != EB_SUCCESS) {
             DEBUG_ERROR("Failed to send batch header: %s", 
                       transport_get_error(transport));
@@ -1976,7 +1978,7 @@ eb_status_t eb_remote_resume_push(
         /* Send the compressed batch with retries */
         int retry_count = 0;
         while (retry_count < MAX_RETRIES) {
-            result = transport_send_data(transport, compressed_batch, compressed_size);
+            result = transport_send_data(transport, compressed_batch, compressed_size, NULL);
             if (result == EB_SUCCESS) {
                 break;
             }
@@ -2018,7 +2020,7 @@ eb_status_t eb_remote_resume_push(
     
     /* Send end marker */
     const char *end_marker = "END";
-    result = transport_send_data(transport, end_marker, strlen(end_marker));
+    result = transport_send_data(transport, end_marker, strlen(end_marker), NULL);
     if (result != EB_SUCCESS) {
         DEBUG_ERROR("Failed to send end marker: %s", 
                   transport_get_error(transport));
@@ -2547,4 +2549,97 @@ static const char* get_remote_target_format(const char* remote_name) {
     pthread_mutex_unlock(&remote_mutex);
     
     return result;
+}
+
+// List all files (hashes) in a remote set path
+// Returns array of strings (caller must free each string and the array)
+eb_status_t eb_remote_list_files(const char *remote_name, const char *set_path, char ***files_out, size_t *count_out) {
+    if (!remote_name || !set_path || !files_out || !count_out) {
+        return EB_ERROR_INVALID_PARAMETER;
+    }
+    *files_out = NULL;
+    *count_out = 0;
+    pthread_mutex_lock(&remote_mutex);
+    int remote_index = -1;
+    for (int i = 0; i < remote_count; i++) {
+        if (strcmp(remotes[i].name, remote_name) == 0) {
+            remote_index = i;
+            break;
+        }
+    }
+    if (remote_index == -1) {
+        pthread_mutex_unlock(&remote_mutex);
+        return EB_ERROR_NOT_FOUND;
+    }
+    remote_config_t remote_config = remotes[remote_index];
+    pthread_mutex_unlock(&remote_mutex);
+    char full_url[1024];
+    snprintf(full_url, sizeof(full_url), "%s/%s", remote_config.url, set_path);
+    eb_transport_t *transport = transport_open(full_url);
+    if (!transport) {
+        return EB_ERROR_TRANSPORT;
+    }
+    int connect_result = transport_connect(transport);
+    if (connect_result != EB_SUCCESS) {
+        transport_close(transport);
+        return connect_result;
+    }
+    char **refs = NULL;
+    size_t ref_count = 0;
+    if (!transport->ops || !transport->ops->list_refs) {
+        transport_disconnect(transport);
+        transport_close(transport);
+        return EB_ERROR_NOT_IMPLEMENTED;
+    }
+    int list_result = transport->ops->list_refs(transport, &refs, &ref_count);
+    transport_disconnect(transport);
+    transport_close(transport);
+    if (list_result != EB_SUCCESS) {
+        return list_result;
+    }
+    *files_out = refs;
+    *count_out = ref_count;
+    return EB_SUCCESS;
+}
+
+// Delete files from a remote set path
+// files: array of file names (relative to set_path), count: number of files
+eb_status_t eb_remote_delete_files(const char *remote_name, const char *set_path, const char **files, size_t count) {
+    if (!remote_name || !set_path || !files || count == 0) {
+        return EB_ERROR_INVALID_PARAMETER;
+    }
+    pthread_mutex_lock(&remote_mutex);
+    int remote_index = -1;
+    for (int i = 0; i < remote_count; i++) {
+        if (strcmp(remotes[i].name, remote_name) == 0) {
+            remote_index = i;
+            break;
+        }
+    }
+    if (remote_index == -1) {
+        pthread_mutex_unlock(&remote_mutex);
+        return EB_ERROR_NOT_FOUND;
+    }
+    remote_config_t remote_config = remotes[remote_index];
+    pthread_mutex_unlock(&remote_mutex);
+    char full_url[1024];
+    snprintf(full_url, sizeof(full_url), "%s/%s", remote_config.url, set_path);
+    eb_transport_t *transport = transport_open(full_url);
+    if (!transport) {
+        return EB_ERROR_TRANSPORT;
+    }
+    int connect_result = transport_connect(transport);
+    if (connect_result != EB_SUCCESS) {
+        transport_close(transport);
+        return connect_result;
+    }
+    if (!transport->ops || !transport->ops->delete_refs) {
+        transport_disconnect(transport);
+        transport_close(transport);
+        return EB_ERROR_NOT_IMPLEMENTED;
+    }
+    int delete_result = transport->ops->delete_refs(transport, files, count);
+    transport_disconnect(transport);
+    transport_close(transport);
+    return delete_result;
 }

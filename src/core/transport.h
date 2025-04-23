@@ -33,9 +33,10 @@ typedef struct eb_transport eb_transport_t;
  */
 typedef int (*transport_connect_fn)(eb_transport_t *transport);
 typedef int (*transport_disconnect_fn)(eb_transport_t *transport);
-typedef int (*transport_send_fn)(eb_transport_t *transport, const void *data, size_t size);
+typedef int (*transport_send_fn)(eb_transport_t *transport, const void *data, size_t size, const char *hash);
 typedef int (*transport_receive_fn)(eb_transport_t *transport, void *buffer, size_t size, size_t *received);
 typedef int (*transport_list_fn)(eb_transport_t *transport, char ***refs, size_t *count);
+typedef int (*transport_delete_fn)(eb_transport_t *transport, const char **refs, size_t count);
 
 /**
  * Transport operations structure
@@ -46,6 +47,7 @@ struct transport_ops {
 	transport_send_fn send_data;
 	transport_receive_fn receive_data;
 	transport_list_fn list_refs;
+	transport_delete_fn delete_refs;
 };
 
 /**
@@ -100,9 +102,10 @@ int transport_disconnect(eb_transport_t *transport);
  * @param transport Transport to use
  * @param data Data to send
  * @param size Size of data
+ * @param hash Hash of the data
  * @return Status code (0 = success)
  */
-int transport_send_data(eb_transport_t *transport, const void *data, size_t size);
+int transport_send_data(eb_transport_t *transport, const void *data, size_t size, const char *hash);
 
 /**
  * Receive data from the remote repository
@@ -132,6 +135,16 @@ int transport_list_refs(eb_transport_t *transport, char ***refs, size_t *count);
  * @return Error message string
  */
 const char *transport_get_error(eb_transport_t *transport);
+
+/**
+ * Delete references/objects in the remote repository
+ *
+ * @param transport Transport to use
+ * @param refs Array of reference/object names to delete
+ * @param count Number of references/objects
+ * @return Status code (0 = success)
+ */
+int transport_delete_refs(eb_transport_t *transport, const char **refs, size_t count);
 
 /* Protocol-specific initialization functions */
 int ssh_transport_init(void);

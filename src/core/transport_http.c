@@ -44,10 +44,11 @@ static int http_disconnect(eb_transport_t *transport)
 	return EB_SUCCESS;
 }
 
-static int http_send_data(eb_transport_t *transport, const void *data, size_t size)
+static int http_send_data(eb_transport_t *transport, const void *data, size_t size, const char *hash)
 {
 	(void)data;  /* Suppress unused parameter warning */
 	(void)size;  /* Suppress unused parameter warning */
+	(void)hash;  /* Suppress unused parameter warning */
 	
 	if (!transport)
 		return EB_ERROR_INVALID_PARAMETER;

@@ -48,6 +48,7 @@
 #include <aws/http/request_response.h>
 #include <aws/http/connection.h>
 #include <aws/io/stream.h>
+#include <aws/common/array_list.h>
 
 /* Add EB_ERROR_CONNECTION definition if not defined */
 #ifndef EB_ERROR_CONNECTION
@@ -81,6 +82,8 @@ struct s3_data {
     char *bucket;
     char *prefix;
     char *region;
+    /* Add signing config storage to support paginator API */
+    struct aws_signing_config_aws signing_config;
     
     bool is_connected;
 };
@@ -164,9 +167,9 @@ static void s3_on_list_finished(struct aws_s3_paginator *paginator, int error_co
 }
 
 /* S3 send data implementation using proper AWS S3 SDK patterns */
-static int s3_send_data(eb_transport_t *transport, const void *data, size_t size) {
-    DEBUG_INFO("s3_send_data called with transport=%p, data=%p, size=%zu", 
-              transport, data, size);
+static int s3_send_data(eb_transport_t *transport, const void *data, size_t size, const char *hash) {
+    DEBUG_INFO("s3_send_data called with transport=%p, data=%p, size=%zu, hash=%s", 
+              transport, data, size, hash ? hash : "(null)");
     
     if (!transport) {
         DEBUG_ERROR("s3_send_data: transport parameter is NULL");
@@ -188,6 +191,12 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
         return EB_ERROR_INVALID_PARAMETER;
     }
     
+    if (!hash || !*hash) {
+        DEBUG_ERROR("s3_send_data: hash parameter is NULL or empty");
+        eb_set_error(EB_ERROR_INVALID_PARAMETER, "No hash provided for S3 upload");
+        return EB_ERROR_INVALID_PARAMETER;
+    }
+    
     struct s3_data *s3 = (struct s3_data *)transport->data;
     
     if (!s3->is_connected) {
@@ -197,8 +206,11 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
         return EB_ERROR_NOT_CONNECTED;
     }
     
-    DEBUG_INFO("Sending %zu bytes to S3 bucket '%s' with prefix '%s'", 
-               size, s3->bucket, s3->prefix);
+    DEBUG_INFO("Sending %zu bytes to S3 bucket '%s' with prefix '%s' and hash '%s'", 
+               size, s3->bucket, s3->prefix, hash);
+    
+    // Add debug log for target_path
+    DEBUG_INFO("s3_send_data: transport->target_path = '%s'", transport->target_path ? transport->target_path : "(null)");
     
     /* Check the content of the first few bytes for debugging */
     const unsigned char *bytes = (const unsigned char *)data;
@@ -208,32 +220,21 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
                 bytes[4], bytes[5], bytes[6], bytes[7]);
     }
     
-    /* Extract set name from path - using a local buffer instead of pointers */
-    char set_name_buf[256] = "main"; /* Default set name */
-    
+    /* Determine set name from transport->target_path, defaulting to "main" */
+    char set_name_buf[256] = {0};
     if (transport->target_path) {
-        DEBUG_INFO("Target path: %s", transport->target_path);
-        const char *path = transport->target_path;
-        if (strncmp(path, "sets/", 5) == 0) {
-            path += 5; /* Skip "sets/" */
-            const char *slash = strchr(path, '/');
-            if (slash) {
-                /* Extract set name from "sets/name/..." */
-                size_t length = slash - path;
-                if (length < sizeof(set_name_buf)) {
-                    /* It fits in our buffer */
-                    memcpy(set_name_buf, path, length);
-                    set_name_buf[length] = '\0';
-                    DEBUG_INFO("Extracted set name from path: %s", set_name_buf);
-                }
-            } else {
-                /* Just "sets/name" case */
-                strncpy(set_name_buf, path, sizeof(set_name_buf) - 1);
-                set_name_buf[sizeof(set_name_buf) - 1] = '\0';
-                DEBUG_INFO("Extracted set name from path: %s", set_name_buf);
-            }
+        const char *tp = transport->target_path;
+        const char *last = strrchr(tp, '/');
+        if (last && last[1]) {
+            strncpy(set_name_buf, last + 1, sizeof(set_name_buf) - 1);
+        } else {
+            strncpy(set_name_buf, tp, sizeof(set_name_buf) - 1);
         }
     }
+    if (set_name_buf[0] == '\0') {
+        strncpy(set_name_buf, "main", sizeof(set_name_buf) - 1);
+    }
+    
     
     /* Transform the data from .embr format to parquet format using the transformer */
     void *transformed_data = NULL;
@@ -336,10 +337,8 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
             
             DEBUG_INFO("Looking for metadata for file: %s", target_filename);
             
-            /* Read the entire index first to find the hash we're processing */
-            FILE *index_file = fopen(".embr/index", "r");
-            char index_hash[128] = {0};
-            
+            char* index_path = get_current_set_index_path();
+            FILE *index_file = index_path ? fopen(index_path, "r") : NULL;
             if (index_file) {
                 char line[1024];
                 while (fgets(line, sizeof(line), index_file)) {
@@ -366,9 +365,9 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
                         /* This is a valid file, check if our current data matches the size */
                         if (st.st_size == size) {
                             /* This is most likely our file, store its hash for metadata lookup */
-                            strncpy(index_hash, file_hash, sizeof(index_hash) - 1);
+                            strncpy(hash, file_hash, sizeof(hash) - 1);
                             DEBUG_INFO("Found likely matching hash in index: %s for file %s (size: %zu)", 
-                                       index_hash, file_path, (size_t)st.st_size);
+                                       hash, file_path, (size_t)st.st_size);
                             
                             /* Store the original source file path */
                             char original_source_file[PATH_MAX] = {0};
@@ -397,7 +396,7 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
                             
                             /* Now load the metadata for this hash */
                             char meta_path[PATH_MAX];
-                            snprintf(meta_path, sizeof(meta_path), ".embr/objects/%s.meta", index_hash);
+                            snprintf(meta_path, sizeof(meta_path), ".embr/objects/%s.meta", hash);
                             
                             DEBUG_INFO("Reading metadata from: %s", meta_path);
                             FILE *meta_file = fopen(meta_path, "r");
@@ -409,8 +408,8 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
                                 char meta_line[1024];
                                 while (fgets(meta_line, sizeof(meta_line), meta_file)) {
                                     /* Look for provider field */
-                                    if (strncmp(meta_line, "provider=", 9) == 0) {
-                                        strncpy(provider, meta_line + 9, sizeof(provider) - 1);
+                                    if (strncmp(meta_line, "model=", 6) == 0) {
+                                        strncpy(provider, meta_line + 6, sizeof(provider) - 1);
                                         
                                         /* Remove newline if present */
                                         char *newline = strchr(provider, '\n');
@@ -489,6 +488,7 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
                                     if (index_file) {
                                         fclose(index_file);
                                     }
+                                    if (index_path) free(index_path);
                                     closedir(dir);
                                     return EB_ERROR_INVALID_DATA;
                                 }
@@ -517,6 +517,7 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
                 
                 fclose(index_file);
             }
+            if (index_path) free(index_path);
             
             closedir(dir);
         } else {
@@ -524,67 +525,30 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
         }
     }
     
-    /* Construct the key with format: <document_name>_<model_name>_<local_storage_timestamp>.parquet */
+    /* Construct the key with format: <hash>.parquet */
     char base_path[512] = {0};
     if (s3->prefix && s3->prefix[0]) {
         strncpy(base_path, s3->prefix, sizeof(base_path) - 1);
     }
-    
     /* Normalize base path (remove trailing slash) */
     size_t base_len = strlen(base_path);
     if (base_len > 0 && base_path[base_len - 1] == '/') {
         base_path[base_len - 1] = '\0';
     }
-    
-    /* Create consistent set of nested keys based on path normalization */
+    /* Hash-based naming of Parquet data and metadata */
     if (base_path[0]) {
-        /* Check if base_path already contains "sets/" followed by the set name */
-        char set_path[512];
-        snprintf(set_path, sizeof(set_path), "sets/%s", set_name_buf);
-        
-        if (strstr(base_path, set_path) != NULL) {
-            /* Base path already contains the full set path, just add documents directly */
-            snprintf(s3_data_key, sizeof(s3_data_key), 
-                    "%s/documents/%s_%s_%lld.parquet", 
-                    base_path, document_name, model_name, (long long)now);
-            
-            snprintf(s3_metadata_key, sizeof(s3_metadata_key), "%s/metadata.json", 
-                    base_path);
-            
-            DEBUG_INFO("Base path already contains set path '%s', avoiding duplication", set_path);
-        } else if (strstr(base_path, "/sets/") || strncmp(base_path, "sets/", 5) == 0) {
-            /* Base path has sets/ but not our specific set */
-            snprintf(s3_data_key, sizeof(s3_data_key), 
-                    "%s/%s/documents/%s_%s_%lld.parquet", 
-                    base_path, set_name_buf, document_name, model_name, (long long)now);
-            
-            snprintf(s3_metadata_key, sizeof(s3_metadata_key), "%s/%s/metadata.json", 
-                    base_path, set_name_buf);
-            
-            DEBUG_INFO("Using set name '%s' with existing sets structure", set_name_buf);
+        if (strstr(base_path, "/documents") != NULL) {
+            snprintf(s3_data_key, sizeof(s3_data_key), "%s/%s.parquet", base_path, hash);
         } else {
-            /* Normal case: prefix doesn't have "sets/" in it, add full path */
-            snprintf(s3_data_key, sizeof(s3_data_key), 
-                    "%s/sets/%s/documents/%s_%s_%lld.parquet", 
-                    base_path, set_name_buf, document_name, model_name, (long long)now);
-            
-            snprintf(s3_metadata_key, sizeof(s3_metadata_key), "%s/sets/%s/metadata.json", 
-                    base_path, set_name_buf);
-            
-            DEBUG_INFO("Adding full sets structure to base path");
+            snprintf(s3_data_key, sizeof(s3_data_key), "%s/documents/%s.parquet", base_path, hash);
         }
+        snprintf(s3_metadata_key, sizeof(s3_metadata_key), "%s/metadata.json", base_path);
     } else {
-        /* Empty prefix */
-        snprintf(s3_data_key, sizeof(s3_data_key), 
-                "sets/%s/documents/%s_%s_%lld.parquet", 
-                set_name_buf, document_name, model_name, (long long)now);
-            
-        snprintf(s3_metadata_key, sizeof(s3_metadata_key), "sets/%s/metadata.json", 
-                set_name_buf);
-        
-        DEBUG_INFO("Using default sets structure with empty base path");
+        snprintf(s3_data_key, sizeof(s3_data_key), "sets/%s/documents/%s.parquet",
+                 set_name_buf, hash);
+        snprintf(s3_metadata_key, sizeof(s3_metadata_key), "sets/%s/metadata.json",
+                 set_name_buf);
     }
-    
     DEBUG_INFO("S3 key for data: %s", s3_data_key);
     DEBUG_INFO("S3 key for metadata: %s", s3_metadata_key);
     DEBUG_INFO("Full S3 location: s3://%s/%s (for data), s3://%s/%s (for metadata)",
@@ -781,31 +745,100 @@ static int s3_send_data(eb_transport_t *transport, const void *data, size_t size
     DEBUG_INFO("Data upload completed successfully");
 
     /* Now upload the metadata file */
-    /* For now, just upload a simple metadata file */
-    char metadata_content[1024];
-    
-    /* Determine correct format for metadata based on whether data was transformed */
-    const char* format_str = "parquet";
-    if (size > 2 && ((const char*)data)[0] == '{') {
-        /* JSON data wasn't transformed */
-        format_str = "json";
-        DEBUG_INFO("Setting metadata format to 'json' as data was identified as JSON");
-    } else if (!need_to_free_transformed) {
-        /* Data wasn't transformed for some other reason */
-        format_str = "raw";
-        DEBUG_INFO("Setting metadata format to 'raw' as data was not transformed");
-    } else {
-        DEBUG_INFO("Setting metadata format to 'parquet' as data was successfully transformed");
+    /* Build expanded metadata JSON using Jansson */
+    json_t *root = json_object();
+    json_object_set_new(root, "timestamp", json_integer((json_int_t)now));
+    json_object_set_new(root, "size", json_integer((json_int_t)transformed_size));
+    json_object_set_new(root, "set", json_string(set_name_buf));
+
+    // --- Gather objects from per-set log ---
+    json_t *objects_arr = json_array();
+    {
+        char *log_path = get_current_set_log_path();
+        if (log_path) {
+            FILE *log_file = fopen(log_path, "r");
+            if (log_file) {
+                char line[PATH_MAX + 128];
+                while (fgets(line, sizeof(line), log_file)) {
+                    char timestamp_str[32], hash[65], src_path[PATH_MAX], model[64];
+                    if (sscanf(line, "%31s %64s %s %63s", timestamp_str, hash, src_path, model) == 4) {
+                        json_t *obj = json_object();
+                        json_object_set_new(obj, "hash", json_string(hash));
+                        json_object_set_new(obj, "path", json_string(src_path));
+                        json_object_set_new(obj, "created", json_integer(atoll(timestamp_str)));
+                        json_object_set_new(obj, "model", json_string(model));
+                        json_array_append_new(objects_arr, obj);
+                    }
+                }
+                fclose(log_file);
+            }
+            free(log_path);
+        }
     }
-    
-    snprintf(metadata_content, sizeof(metadata_content),
-           "{\n"
-           "  \"format\": \"%s\",\n"
-           "  \"timestamp\": %lld,\n"
-           "  \"size\": %zu,\n"
-           "  \"set\": \"%s\"\n"
-           "}\n", 
-           format_str, (long long)now, transformed_size, set_name_buf);
+    json_object_set_new(root, "objects", objects_arr);
+
+    // --- Gather index from per-set index ---
+    json_t *index_arr = json_array();
+    {
+        char *index_path = get_current_set_index_path();
+        if (index_path) {
+            FILE *idx_file = fopen(index_path, "r");
+            if (idx_file) {
+                char hash[65], src_path[PATH_MAX];
+                while (fscanf(idx_file, "%64s %s", hash, src_path) == 2) {
+                    json_t *idx_obj = json_object();
+                    json_object_set_new(idx_obj, "hash", json_string(hash));
+                    json_object_set_new(idx_obj, "path", json_string(src_path));
+                    json_array_append_new(index_arr, idx_obj);
+                }
+                fclose(idx_file);
+            }
+            free(index_path);
+        }
+    }
+    json_object_set_new(root, "index", index_arr);
+
+    // --- Gather refs ---
+    json_t *refs_obj = json_object();
+    char* model_refs_dir = get_current_set_model_refs_dir();
+    if (model_refs_dir) {
+        DIR *refs_dir = opendir(model_refs_dir);
+        if (refs_dir) {
+            struct dirent *entry;
+            while ((entry = readdir(refs_dir)) != NULL) {
+                if (entry->d_type != DT_REG) continue;
+                char ref_path[512];
+                snprintf(ref_path, sizeof(ref_path), "%s/%s", model_refs_dir, entry->d_name);
+                FILE *ref = fopen(ref_path, "r");
+                if (ref) {
+                    char hash[256];
+                    if (fgets(hash, sizeof(hash), ref)) {
+                        char *nl = strchr(hash, '\n'); if (nl) *nl = '\0';
+                        json_object_set_new(refs_obj, entry->d_name, json_string(hash));
+                    }
+                    fclose(ref);
+                }
+            }
+            closedir(refs_dir);
+        }
+        free(model_refs_dir);
+    }
+    json_object_set_new(root, "refs", refs_obj);
+
+    // --- Set head ---
+    char head_val[128] = "main";
+    FILE *head = fopen(".embr/HEAD", "r");
+    if (head) {
+        if (fgets(head_val, sizeof(head_val), head)) {
+            char *nl = strchr(head_val, '\n'); if (nl) *nl = '\0';
+        }
+        fclose(head);
+    }
+    json_object_set_new(root, "head", json_string(head_val));
+
+    // --- Serialize JSON ---
+    char *metadata_content = json_dumps(root, JSON_INDENT(2));
+    json_decref(root);
     
     /* Create a temporary file for the metadata */
     char meta_temp_filename[256];
@@ -1154,8 +1187,8 @@ static int s3_connect(eb_transport_t *transport) {
     aws_auth_library_init(s3->allocator);
     aws_s3_library_init(s3->allocator);
     
-    /* Create event loop group with multiple threads to ensure we don't hang */
-    uint16_t num_event_loop_threads = 8; /* Increase to 8 threads to handle more parallel operations */
+    /* Create event loop group with a single thread to match minimal sample */
+    uint16_t num_event_loop_threads = 1; /* Single-threaded event loop group */
     DEBUG_INFO("Creating event loop group with %d threads", num_event_loop_threads);
     s3->event_loop_group = aws_event_loop_group_new_default(s3->allocator, num_event_loop_threads, NULL);
     if (!s3->event_loop_group) {
@@ -1245,13 +1278,15 @@ static int s3_connect(eb_transport_t *transport) {
         .region = aws_byte_cursor_from_c_str(s3->region),
         .credentials_provider = credentials_provider
     };
+    /* Store signing config in s3 data */
+    s3->signing_config = signing_config;
     
     /* Create S3 client configuration */
     struct aws_s3_client_config client_config = {
         .region = aws_byte_cursor_from_c_str(s3->region),
         .client_bootstrap = s3->bootstrap,
         .tls_mode = AWS_MR_TLS_ENABLED, /* Re-enable TLS with proper configuration */
-        .signing_config = &signing_config,
+        .signing_config = &s3->signing_config,
         .compute_content_md5 = AWS_MR_CONTENT_MD5_ENABLED,
         .part_size = 5 * 1024 * 1024, /* 5MB default part size */
         .multipart_upload_threshold = 8 * 1024 * 1024, /* Use multipart for files larger than 8MB */
@@ -1460,316 +1495,128 @@ static void s3_free(eb_transport_t *transport) {
     transport->data = NULL;
 }
 
+// Add a named struct for the list context at the top of the file (after includes):
+typedef struct s3_list_context {
+    bool is_done;
+    int error_code;
+    struct aws_array_list *keys;
+    struct aws_mutex *lock;
+    struct aws_condition_variable *signal;
+} s3_list_context;
+
+/* Predicate to wait for list operation to complete */
+static bool s3_list_done_pred(void *arg) {
+    s3_list_context *ctx = (s3_list_context *)arg;
+    return ctx->is_done;
+}
+
+/* File-scope callbacks for s3_list_refs to avoid nested function trampolines */
+static int s3_list_refs_object_cb(const struct aws_s3_object_info *info, void *user_data) {
+    s3_list_context *ctx = (s3_list_context *)user_data;
+    char *key = malloc(info->key.len + 1);
+    memcpy(key, info->key.ptr, info->key.len);
+    key[info->key.len] = '\0';
+    aws_array_list_push_back(ctx->keys, &key);
+    DEBUG_INFO("s3_list_refs_object_cb: key = %s, size = %zu", key, info->size);
+    return AWS_OP_SUCCESS;
+}
+
+static void s3_list_refs_finished_cb(struct aws_s3_paginator *paginator, int error_code, void *user_data) {
+    s3_list_context *ctx = (s3_list_context *)user_data;
+    aws_mutex_lock(ctx->lock);
+    ctx->error_code = error_code;
+    DEBUG_INFO("s3_list_refs_finished_cb: error_code = %d", error_code);
+    ctx->is_done = true;
+    aws_condition_variable_notify_one(ctx->signal);
+    aws_mutex_unlock(ctx->lock);
+}
+
 /* List refs in the S3 bucket */
 static int s3_list_refs(eb_transport_t *transport, 
                       char ***refs_out, size_t *count_out) {
-    if (!transport || !transport->data || !refs_out || !count_out)
+    if (!transport || !transport->data) {
         return EB_ERROR_INVALID_PARAMETER;
-    
+    }
     struct s3_data *s3 = (struct s3_data *)transport->data;
-    
     if (!s3->is_connected) {
-        snprintf(transport->error_msg, sizeof(transport->error_msg),
-                "Not connected to S3");
         return EB_ERROR_NOT_CONNECTED;
     }
-    
-    DEBUG_INFO("Listing objects in S3 bucket '%s' with prefix '%s'", 
-               s3->bucket, s3->prefix ? s3->prefix : "(none)");
-    
-    /* Initialize output parameters to empty list */
-    *refs_out = NULL;
-    *count_out = 0;
-    
-    /* Setup for listing objects using the SDK */
-    struct aws_array_list object_keys;
-    if (aws_array_list_init_dynamic(&object_keys, s3->allocator, 32, sizeof(struct aws_string *))) {
-        snprintf(transport->error_msg, sizeof(transport->error_msg),
-                "Failed to initialize array for object keys");
-        return EB_ERROR_MEMORY;
-    }
-    
-    /* Setup synchronization primitives */
-    struct aws_mutex mutex = AWS_MUTEX_INIT;
-    struct aws_condition_variable completion_signal = AWS_CONDITION_VARIABLE_INIT;
-    
-    /* Setup context for tracking listing operation */
-    struct {
-        bool is_done;
-        int error_code;
-        struct aws_array_list *keys;
-        struct aws_mutex *lock;
-        struct aws_condition_variable *signal;
-    } list_context = {
-        .is_done = false,
-        .error_code = 0,
-        .keys = &object_keys,
-        .lock = &mutex,
-        .signal = &completion_signal
-    };
-    
-    /* Callback for each object found during listing */
-    int s3_on_object(const struct aws_s3_object_info *info, void *user_data) {
-        struct {
-            bool is_done;
-            int error_code;
-            struct aws_array_list *keys;
-            struct aws_mutex *lock;
-            struct aws_condition_variable *signal;
-        } *context = user_data;
-        
-        /* Skip directories (objects that end with '/') */
-        if (info->key.len > 0 && info->key.ptr[info->key.len - 1] == '/') {
-            return AWS_OP_SUCCESS;
-        }
-        
-        /* Make a copy of the key */
-        struct aws_string *key = aws_string_new_from_cursor(s3->allocator, &info->key);
-        if (!key) {
-            return AWS_OP_ERR;
-        }
-        
-        /* Add the key to our list */
-        if (aws_array_list_push_back(context->keys, &key)) {
-            aws_string_destroy(key);
-            return AWS_OP_ERR;
-        }
-        
-        return AWS_OP_SUCCESS;
-    }
-    
-    /* Callback when listing operation is finished */
-    void s3_on_list_finished(struct aws_s3_paginator *paginator, int error_code, void *user_data) {
-        struct {
-            bool is_done;
-            int error_code;
-            struct aws_array_list *keys;
-            struct aws_mutex *lock;
-            struct aws_condition_variable *signal;
-        } *context = user_data;
-        
-        if (error_code == 0) {
-            bool has_more_results = aws_s3_paginator_has_more_results(paginator);
-            if (has_more_results) {
-                /* Continue to next page of results */
-                if (aws_s3_paginator_continue(paginator, NULL) == AWS_OP_SUCCESS) {
-                    return;
-                }
-                
-                /* If continue fails, mark as done with error */
-                error_code = aws_last_error();
-            }
-        }
-        
-        /* Mark completion and notify */
-        aws_mutex_lock(context->lock);
-        context->is_done = true;
-        context->error_code = error_code;
-        aws_condition_variable_notify_one(context->signal);
-        aws_mutex_unlock(context->lock);
-    }
-    
-    /* Setup endpoint */
+
+    // Set up paginator, context, etc.
+    struct aws_mutex *mutex = malloc(sizeof(struct aws_mutex));
+    struct aws_condition_variable *completion_signal = malloc(sizeof(struct aws_condition_variable));
+    aws_mutex_init(mutex);
+    aws_condition_variable_init(completion_signal);
+    s3_list_context *ctx = malloc(sizeof(s3_list_context));
+    ctx->lock = mutex;
+    ctx->signal = completion_signal;
+    ctx->is_done = false;
+    // Initialize array list for keys
+    struct aws_array_list *keys = malloc(sizeof(struct aws_array_list));
+    aws_array_list_init_dynamic(keys, s3->allocator, 32, sizeof(char*));
+    ctx->keys = keys;
+
     char endpoint[1024];
     snprintf(endpoint, sizeof(endpoint), "s3.%s.amazonaws.com", s3->region);
-    
-    /* Create S3 list objects parameters */
+    struct aws_byte_cursor prefix_cursor;
+    if (s3->prefix && s3->prefix[0]) {
+        DEBUG_PRINT("s3_list_refs: using prefix: '%s'", s3->prefix);
+        prefix_cursor = aws_byte_cursor_from_c_str(s3->prefix);
+    } else {
+        DEBUG_PRINT("s3_list_refs: using default prefix: 'sets/'");
+        prefix_cursor = aws_byte_cursor_from_c_str("sets/");
+    }
     struct aws_s3_list_objects_params params = {
         .client = s3->s3_client,
         .bucket_name = aws_byte_cursor_from_c_str(s3->bucket),
-        .prefix = s3->prefix ? aws_byte_cursor_from_c_str(s3->prefix) : aws_byte_cursor_from_array(NULL, 0),
-        .delimiter = aws_byte_cursor_from_c_str("/"),
+        .prefix = prefix_cursor,
         .endpoint = aws_byte_cursor_from_c_str(endpoint),
-        .user_data = &list_context,
-        .on_object = s3_on_object,
-        .on_list_finished = s3_on_list_finished
+        .user_data = ctx,
+        .on_object = s3_list_refs_object_cb,
+        .on_list_finished = s3_list_refs_finished_cb
     };
-    
-    /* Initiate list objects operation */
     struct aws_s3_paginator *paginator = aws_s3_initiate_list_objects(s3->allocator, &params);
     if (!paginator) {
-        int aws_error = aws_last_error();
-        DEBUG_ERROR("Failed to initiate list objects operation: %s", 
-                  aws_error_debug_str(aws_error));
-        aws_array_list_clean_up(&object_keys);
-        snprintf(transport->error_msg, sizeof(transport->error_msg),
-                "Failed to initiate list objects operation: %s", 
-                aws_error_debug_str(aws_error));
+        aws_mutex_clean_up(mutex);
+        aws_condition_variable_clean_up(completion_signal);
+        free(mutex);
+        free(completion_signal);
+        free(ctx);
         return EB_ERROR_CONNECTION;
     }
-    
-    /* Start the paginator */
-    if (aws_s3_paginator_continue(paginator, NULL)) {
-        int aws_error = aws_last_error();
-        DEBUG_ERROR("Failed to start list objects operation: %s",
-                  aws_error_debug_str(aws_error));
+    if (aws_s3_paginator_continue(paginator, &s3->signing_config)) {
         aws_s3_paginator_release(paginator);
-        aws_array_list_clean_up(&object_keys);
-        snprintf(transport->error_msg, sizeof(transport->error_msg),
-                "Failed to start list objects operation: %s",
-                aws_error_debug_str(aws_error));
+        aws_mutex_clean_up(mutex);
+        aws_condition_variable_clean_up(completion_signal);
+        free(mutex);
+        free(completion_signal);
+        free(ctx);
         return EB_ERROR_CONNECTION;
     }
-    
-    /* Wait for the operation to complete */
-    aws_mutex_lock(&mutex);
-    struct timespec list_start_time, list_current_time;
-    clock_gettime(CLOCK_REALTIME, &list_start_time);
-    bool list_timed_out = false;
-    int max_list_wait_seconds = 20; /* 20 seconds timeout - shorter timeout for listing operations */
-    
-    DEBUG_INFO("Waiting for S3 list operation to complete (timeout: %d secs)", max_list_wait_seconds);
-    
-    while (!list_context.is_done) {
-        /* Check if the operation has completed */
-        if (list_context.is_done) {
-            break;
-        }
-        
-        /* Check for timeout */
-        clock_gettime(CLOCK_REALTIME, &list_current_time);
-        int elapsed_seconds = (list_current_time.tv_sec - list_start_time.tv_sec);
-        
-        if (elapsed_seconds >= max_list_wait_seconds) {
-            DEBUG_ERROR("S3 list operation timed out after %d seconds", max_list_wait_seconds);
-            DEBUG_ERROR("Consider checking S3 connectivity and permissions if this happens frequently");
-            list_timed_out = true;
-            break;
-        }
-        
-        /* Log progress periodically */
-        if (elapsed_seconds % 5 == 0 && elapsed_seconds > 0) {
-            DEBUG_INFO("Still waiting for list operation to complete... (%d seconds elapsed)", 
-                     elapsed_seconds);
-        }
-        
-        /* Temporarily release the mutex to allow the S3 client to process callbacks */
-    aws_mutex_unlock(&mutex);
-    
-        /* Process events while waiting */
-        process_events_while_waiting(s3, 100); /* Wait 100ms */
-        
-        /* Re-acquire the mutex before checking the condition again */
-        aws_mutex_lock(&mutex);
-        
-        /* Use condition variable with a short timeout */
-        int64_t wait_timeout_ns = 1000000000; /* 1 second in nanoseconds */
-        
-        aws_condition_variable_wait_for_pred(
-            &completion_signal, 
-            &mutex, 
-            wait_timeout_ns, 
-            s_is_operation_done, 
-            &list_context);
-    }
-    
-    /* Check if we timed out */
-    if (!list_context.is_done) {
-        DEBUG_ERROR("S3 list operation timed out");
-        list_timed_out = true;
-    }
-    aws_mutex_unlock(&mutex);
-    
-    /* Clean up the paginator */
+    aws_mutex_lock(mutex);
+    aws_condition_variable_wait_pred(ctx->signal, ctx->lock, s3_list_done_pred, ctx);
+    aws_mutex_unlock(mutex);
+    // DEBUG: listing completed for prefix
+    DEBUG_INFO("s3_list_refs: listing done, prefix='%s', error_code=%d", s3->prefix, ctx->error_code);
     aws_s3_paginator_release(paginator);
-    
-    /* Check if we got an error */
-    if (list_context.error_code) {
-        DEBUG_ERROR("List objects operation failed: %s", 
-                  aws_error_debug_str(list_context.error_code));
-        
-        /* Clean up key list */
-        for (size_t i = 0; i < aws_array_list_length(&object_keys); ++i) {
-            struct aws_string *key = NULL;
-            if (aws_array_list_get_at(&object_keys, &key, i) == AWS_OP_SUCCESS && key) {
-                aws_string_destroy(key);
-            }
+    // After paginator, copy keys to refs_out/count_out
+    size_t n = aws_array_list_length(ctx->keys);
+    if (refs_out && count_out) {
+        *refs_out = malloc(n * sizeof(char*));
+        for (size_t i = 0; i < n; ++i) {
+            char *key;
+            aws_array_list_get_at(ctx->keys, &key, i);
+            (*refs_out)[i] = key;
         }
-        aws_array_list_clean_up(&object_keys);
-        
-        snprintf(transport->error_msg, sizeof(transport->error_msg),
-                "List objects operation failed: %s", 
-                aws_error_debug_str(list_context.error_code));
-        return EB_ERROR_CONNECTION;
+        *count_out = n;
     }
-    
-    /* Convert results to output format */
-    size_t key_count = aws_array_list_length(&object_keys);
-    if (key_count == 0) {
-        /* No objects found, return empty list */
-        aws_array_list_clean_up(&object_keys);
-        *refs_out = NULL;
-        *count_out = 0;
-        return EB_SUCCESS;
-    }
-    
-    /* Allocate memory for the result array */
-    char **refs = calloc(key_count + 1, sizeof(char *));
-    if (!refs) {
-        /* Clean up key list */
-        for (size_t i = 0; i < key_count; ++i) {
-                struct aws_string *key = NULL;
-            if (aws_array_list_get_at(&object_keys, &key, i) == AWS_OP_SUCCESS && key) {
-                    aws_string_destroy(key);
-                }
-            }
-            aws_array_list_clean_up(&object_keys);
-            
-            snprintf(transport->error_msg, sizeof(transport->error_msg),
-                "Failed to allocate memory for result array");
-            return EB_ERROR_MEMORY;
-        }
-        
-    /* Process each key, converting to C string */
-    size_t valid_count = 0;
-    for (size_t i = 0; i < key_count; ++i) {
-            struct aws_string *aws_key = NULL;
-        if (aws_array_list_get_at(&object_keys, &aws_key, i) == AWS_OP_SUCCESS && aws_key) {
-            /* Skip directories (shouldn't happen, but double check) */
-            if (aws_key->len > 0 && aws_key->bytes[aws_key->len - 1] == '/') {
-                aws_string_destroy(aws_key);
-                continue;
-            }
-            
-            /* Make a copy of the string */
-            refs[valid_count] = strndup((const char *)aws_key->bytes, aws_key->len);
-            if (!refs[valid_count]) {
-                /* Memory allocation failed, clean up */
-                for (size_t j = 0; j < valid_count; ++j) {
-                    free(refs[j]);
-                }
-                free(refs);
-                
-                /* Clean up remaining AWS strings */
-                for (size_t j = i; j < key_count; ++j) {
-                    struct aws_string *key = NULL;
-                    if (aws_array_list_get_at(&object_keys, &key, j) == AWS_OP_SUCCESS && key) {
-                        aws_string_destroy(key);
-                    }
-                }
-                aws_array_list_clean_up(&object_keys);
-                
-                snprintf(transport->error_msg, sizeof(transport->error_msg),
-                        "Failed to allocate memory for result string");
-                return EB_ERROR_MEMORY;
-            }
-            
-            aws_string_destroy(aws_key);
-            valid_count++;
-        }
-    }
-    
-    /* Clean up the array list */
-    aws_array_list_clean_up(&object_keys);
-    
-    /* Terminate the array with NULL */
-    refs[valid_count] = NULL;
-    
-    /* Set output parameters */
-    *refs_out = refs;
-    *count_out = valid_count;
-    
-    DEBUG_INFO("Listed %zu objects in S3 bucket", valid_count);
+    aws_array_list_clean_up(ctx->keys);
+    free(ctx->keys);
+    aws_mutex_clean_up(mutex);
+    aws_condition_variable_clean_up(completion_signal);
+    free(mutex);
+    free(completion_signal);
+    free(ctx);
     return EB_SUCCESS;
 }
 
@@ -1953,531 +1800,20 @@ static int s3_receive_data(eb_transport_t *transport, void *buffer, size_t size,
     
     DEBUG_INFO("Downloading from S3 bucket '%s' with prefix '%s'", 
                s3->bucket, s3->prefix);
-    
-    /* Forward declare S3 callback functions */
-    int s3_on_metadata_body(
-        struct aws_s3_meta_request *meta_request,
-        const struct aws_byte_cursor *body,
-        uint64_t range_start,
-        void *user_data);
-        
-    void s3_on_metadata_complete(
-        struct aws_s3_meta_request *meta_request,
-        const struct aws_s3_meta_request_result *meta_request_result,
-        void *user_data);
-        
-    int s3_on_data_body(
-        struct aws_s3_meta_request *meta_request,
-        const struct aws_byte_cursor *body,
-        uint64_t range_start,
-        void *user_data);
-        
-    void s3_on_data_complete(
-        struct aws_s3_meta_request *meta_request,
-        const struct aws_s3_meta_request_result *meta_request_result,
-        void *user_data);
-    
-    /* Initialize received count to 0 */
-    *received = 0;
-    
-    /* Extract set name from path - using a local buffer instead of pointers */
-    char set_name_buf[256] = "main"; /* Default set name */
-    char data_path[512] = {0}; /* Buffer for data path */
-    bool prefix_has_sets = false;
-    
-    /* Parse target path if available to extract set name */
-    if (transport->target_path) {
-        const char *path = transport->target_path;
-        if (strncmp(path, "sets/", 5) == 0) {
-            path += 5; /* Skip "sets/" */
-            const char *slash = strchr(path, '/');
-            if (slash) {
-                /* Extract set name from "sets/name/..." */
-                size_t length = slash - path;
-                if (length < sizeof(set_name_buf)) {
-                    /* It fits in our buffer */
-                    memcpy(set_name_buf, path, length);
-                    set_name_buf[length] = '\0';
-                    DEBUG_INFO("Extracted set name from path: %s", set_name_buf);
-                }
-            }
-        }
-    }
-    
-    /* Duplicate the prefix - we may need to modify it */
-    char *clean_prefix = s3->prefix ? strdup(s3->prefix) : NULL;
-    /* Check if it has a query part we should ignore for path construction */
-    char *query_pos = clean_prefix ? strchr(clean_prefix, '?') : NULL;
-    
-    if (query_pos) {
-        /* Temporarily null-terminate at the question mark */
-        *query_pos = '\0';
-    }
-    
-    /* Create the S3 keys */
-    char s3_metadata_key[1024] = {0};
-    
-    /* Check if prefix already contains a sets/<n>/ structure */
-    prefix_has_sets = false;
-    if (clean_prefix && *clean_prefix) {
-        /* Check specifically for the path ending with sets/set_name */
-        char set_path[512];
-        snprintf(set_path, sizeof(set_path), "sets/%s", set_name_buf);
-        
-        /* Check if the prefix ends with set_path */
-        size_t prefix_len = strlen(clean_prefix);
-        size_t path_len = strlen(set_path);
-        
-        if (prefix_len >= path_len) {
-            const char *end_of_prefix = clean_prefix + prefix_len - path_len;
-            if (strcmp(end_of_prefix, set_path) == 0) {
-                /* Prefix already ends with sets/set_name */
-                prefix_has_sets = true;
-                DEBUG_INFO("Prefix ends with 'sets/%s', avoiding path duplication", set_name_buf);
-            } else {
-                /* Check for generic sets/ structure */
-        const char *sets_pos = strstr(clean_prefix, "sets/");
-        if (sets_pos) {
-            sets_pos += 5; /* Skip "sets/" */
-            const char *slash = strchr(sets_pos, '/');
-            if (slash) {
-                /* Found sets/<n>/ pattern in prefix */
-                prefix_has_sets = true;
-                DEBUG_INFO("Found existing sets/ structure in prefix");
-                    }
-                }
-            }
-        }
-    }
-    
-    /* Construct the S3 key for metadata */
-    if (clean_prefix && *clean_prefix) {
-        /* Remove any trailing slash from the prefix */
-        size_t prefix_len = strlen(clean_prefix);
-        if (prefix_len > 0 && clean_prefix[prefix_len - 1] == '/') {
-            clean_prefix[prefix_len - 1] = '\0';
-            prefix_len--;
-        }
-        
-        if (prefix_has_sets) {
-            /* Prefix already contains sets structure, just append metadata.json */
-            snprintf(s3_metadata_key, sizeof(s3_metadata_key), "%s/metadata.json", clean_prefix);
-            DEBUG_INFO("Using existing sets structure for metadata: %s/metadata.json", clean_prefix);
-            } else {
-            /* No sets structure, add it with the provided set name */
-            snprintf(s3_metadata_key, sizeof(s3_metadata_key), "%s/sets/%s/metadata.json", 
-                    clean_prefix, set_name_buf);
-            DEBUG_INFO("Adding sets structure for metadata: %s/sets/%s/metadata.json", 
-                     clean_prefix, set_name_buf);
-        }
-        } else {
-        /* Fallback if prefix is empty */
-        snprintf(s3_metadata_key, sizeof(s3_metadata_key), "sets/%s/metadata.json", set_name_buf);
-        DEBUG_INFO("Using basic path for metadata: sets/%s/metadata.json", set_name_buf);
-    }
-    
-    /* Restore the ? if we modified it */
-    if (query_pos) {
-        *query_pos = '?';
-    }
-    
-    /* Free the duplicated prefix if we created one */
-    if (clean_prefix) {
-        free(clean_prefix);
-    }
-    
-    DEBUG_INFO("S3 key for metadata: %s", s3_metadata_key);
-    
-    /* Setup synchronization primitives */
+
+    // Always use direct-download logic for any key
+    char s3_data_key[1024] = {0};
+    snprintf(s3_data_key, sizeof(s3_data_key), "%s", transport->target_path);
+    DEBUG_INFO("Direct data download: S3 key = %s", s3_data_key);
+    // Setup synchronization primitives
     struct aws_mutex mutex = AWS_MUTEX_INIT;
     struct aws_condition_variable completion_signal = AWS_CONDITION_VARIABLE_INIT;
-    
-    /* Buffer to hold the metadata JSON */
-    char *metadata_content = NULL;
-    size_t metadata_capacity = 16384; /* Initial capacity for metadata */
-    metadata_content = malloc(metadata_capacity);
-    if (!metadata_content) {
-        snprintf(transport->error_msg, sizeof(transport->error_msg),
-                "Failed to allocate memory for metadata");
-        return EB_ERROR_MEMORY;
-    }
-    
-    /* Setup context for metadata download */
-    struct download_context meta_context = {
-        .error_code = 0,
-        .is_done = false,
-        .lock = &mutex,
-        .signal = &completion_signal,
-        .data = metadata_content,
-        .data_size = 0,
-        .capacity = metadata_capacity,
-        .current_pos = 0
-    };
-    
-    /* Create HTTP request for metadata download */
-    struct aws_http_message *metadata_request = aws_http_message_new_request(s3->allocator);
-    if (!metadata_request) {
-        DEBUG_ERROR("Failed to create HTTP request for metadata download");
-        free(metadata_content);
-        return EB_ERROR_MEMORY;
-    }
-    
-    /* Set up host header */
-    char host_header_value[256];
-    snprintf(host_header_value, sizeof(host_header_value), "%s.s3.%s.amazonaws.com", 
-            s3->bucket, s3->region);
-    
-    /* Add Host header */
-    struct aws_http_header host_header = {
-        .name = aws_byte_cursor_from_c_str("Host"),
-        .value = aws_byte_cursor_from_c_str(host_header_value),
-        .compression = AWS_HTTP_HEADER_COMPRESSION_USE_CACHE
-    };
-    
-    /* Configure the request */
-    if (aws_http_message_add_header(metadata_request, host_header) != AWS_OP_SUCCESS) {
-        DEBUG_ERROR("Failed to add Host header to metadata request");
-        aws_http_message_release(metadata_request);
-        free(metadata_content);
-        return EB_ERROR_GENERIC;
-    }
-    
-    if (aws_http_message_set_request_method(metadata_request, aws_http_method_get) != AWS_OP_SUCCESS) {
-        DEBUG_ERROR("Failed to set GET method on metadata request");
-        aws_http_message_release(metadata_request);
-        free(metadata_content);
-        return EB_ERROR_GENERIC;
-    }
-
-    /* Make sure the path starts with a slash for S3 requests */
-    char s3_request_path[1024];
-    if (s3_metadata_key[0] != '/') {
-        snprintf(s3_request_path, sizeof(s3_request_path), "/%s", s3_metadata_key);
-    } else {
-        strncpy(s3_request_path, s3_metadata_key, sizeof(s3_request_path)-1);
-        s3_request_path[sizeof(s3_request_path)-1] = '\0';
-    }
-    
-    DEBUG_INFO("S3 request path: %s", s3_request_path);
-    
-    struct aws_byte_cursor path_cursor = aws_byte_cursor_from_c_str(s3_request_path);
-    if (aws_http_message_set_request_path(metadata_request, path_cursor) != AWS_OP_SUCCESS) {
-        DEBUG_ERROR("Failed to set path on metadata request: %s", s3_request_path);
-        aws_http_message_release(metadata_request);
-        free(metadata_content);
-        return EB_ERROR_GENERIC;
-    }
-    
-    /* Setup the S3 request options */
-    struct aws_s3_meta_request_options metadata_options = {
-        .type = AWS_S3_META_REQUEST_TYPE_GET_OBJECT,
-        .message = metadata_request,
-        .user_data = &meta_context,
-        .body_callback = s3_metadata_body_cb,
-        .finish_callback = s3_metadata_complete_cb
-    };
-    
-    /* Send the request */
-    struct aws_s3_meta_request *metadata_meta_request = 
-        aws_s3_client_make_meta_request(s3->s3_client, &metadata_options);
-    
-    if (!metadata_meta_request) {
-        DEBUG_ERROR("Failed to create metadata download request: %s",
-                   aws_error_debug_str(aws_last_error()));
-        aws_http_message_release(metadata_request);
-        free(metadata_content);
-        return EB_ERROR_CONNECTION;
-    }
-    
-    /* Wait for the download to complete */
-    aws_mutex_lock(&mutex);
-    struct timespec meta_dl_start_time, meta_dl_current_time;
-    clock_gettime(CLOCK_REALTIME, &meta_dl_start_time);
-    bool meta_dl_timed_out = false;
-    
-    while (!meta_context.is_done) {
-        /* Check if the download has completed */
-        if (meta_context.is_done) {
-            break;
-        }
-        
-        /* Check for timeout */
-        clock_gettime(CLOCK_REALTIME, &meta_dl_current_time);
-        int elapsed_seconds = (meta_dl_current_time.tv_sec - meta_dl_start_time.tv_sec);
-        
-        if (elapsed_seconds >= 30) { /* 30 second hard timeout */
-            DEBUG_ERROR("S3 metadata download operation timed out after 30 seconds");
-            meta_dl_timed_out = true;
-            break;
-        }
-        
-        /* Log progress periodically */
-        if (elapsed_seconds % 5 == 0 && elapsed_seconds > 0) {
-            DEBUG_INFO("Still waiting for metadata download to complete... (%d seconds elapsed)", 
-                     elapsed_seconds);
-        }
-        
-        /* Temporarily release the mutex to allow the S3 client to process callbacks */
-    aws_mutex_unlock(&mutex);
-        
-        /* Sleep very briefly to yield CPU and allow event loops to process */
-        usleep(10000); /* 10ms */
-        
-        /* Re-acquire the mutex before checking the condition again */
-        aws_mutex_lock(&mutex);
-        
-        /* Use the condition variable for a short wait */
-        aws_condition_variable_wait_pred(&completion_signal, &mutex, s_is_download_done, &meta_context);
-    }
-    
-    /* Check for timeout */
-    if (!meta_context.is_done) {
-        DEBUG_ERROR("S3 metadata download operation timed out");
-        meta_dl_timed_out = true;
-    }
-    aws_mutex_unlock(&mutex);
-    
-    /* Check for timeout */
-    if (meta_dl_timed_out) {
-        aws_s3_meta_request_release(metadata_meta_request);
-        aws_http_message_release(metadata_request);
-        free(metadata_content);
-        snprintf(transport->error_msg, sizeof(transport->error_msg),
-                "S3 metadata download operation timed out");
-        return EB_ERROR_TIMEOUT;
-    }
-    
-    /* Check the download result */
-    if (meta_context.error_code != AWS_ERROR_SUCCESS) {
-        DEBUG_ERROR("Failed to download metadata: %s",
-                   aws_error_debug_str(meta_context.error_code));
-        aws_s3_meta_request_release(metadata_meta_request);
-        aws_http_message_release(metadata_request);
-        free(metadata_content);
-        snprintf(transport->error_msg, sizeof(transport->error_msg),
-                "Failed to download metadata: %s",
-                aws_error_debug_str(meta_context.error_code));
-        return EB_ERROR_CONNECTION;
-    }
-    
-    /* Make sure we got some data */
-    if (meta_context.data_size == 0 || !meta_context.data) {
-        DEBUG_ERROR("Downloaded metadata is empty");
-        aws_s3_meta_request_release(metadata_meta_request);
-        aws_http_message_release(metadata_request);
-        free(metadata_content);
-        snprintf(transport->error_msg, sizeof(transport->error_msg),
-                "Downloaded metadata is empty");
-        return EB_ERROR_INVALID_DATA;
-    }
-    
-    /* Make sure the metadata content is null-terminated for JSON parsing */
-    if (meta_context.data_size < meta_context.capacity) {
-        metadata_content[meta_context.data_size] = '\0';
-    } else {
-        DEBUG_ERROR("Metadata content buffer is full, cannot null-terminate");
-        aws_s3_meta_request_release(metadata_meta_request);
-        aws_http_message_release(metadata_request);
-        free(metadata_content);
-        snprintf(transport->error_msg, sizeof(transport->error_msg),
-                "Metadata content buffer is full");
-        return EB_ERROR_BUFFER_TOO_SMALL;
-    }
-    
-    /* Cleanup metadata request resources */
-    aws_s3_meta_request_release(metadata_meta_request);
-    aws_http_message_release(metadata_request);
-    
-    DEBUG_INFO("Successfully downloaded metadata (%zu bytes)", meta_context.data_size);
-    
-    /* Parse the metadata JSON using our JSON parser */
-    void *parsed_json = NULL;
-    eb_status_t json_status = EB_ERROR_INVALID_DATA;
-    
-    /* Make sure metadata_content has valid content before parsing */
-    if (meta_context.data && meta_context.data_size > 0) {
-        DEBUG_INFO("Attempting to parse JSON metadata (%zu bytes)", meta_context.data_size);
-        
-        /* Show just the first few characters of the metadata content */
-        size_t print_len = meta_context.data_size < 100 ? meta_context.data_size : 100;
-        DEBUG_INFO("Metadata content preview: %.*s", (int)print_len, (char*)meta_context.data);
-        
-        /* Try to parse the JSON */
-        DEBUG_INFO("Calling eb_json_parse_object...");
-        json_status = eb_json_parse_object(meta_context.data, meta_context.data_size, &parsed_json);
-        DEBUG_INFO("JSON parse result: %d (EB_SUCCESS=%d)", json_status, EB_SUCCESS);
-    } else {
-        DEBUG_ERROR("Invalid metadata content for JSON parsing: metadata_content=%p, size=%zu", 
-                   meta_context.data, meta_context.data_size);
-    }
-    
-    if (json_status != EB_SUCCESS || !parsed_json) {
-        DEBUG_ERROR("Failed to parse metadata JSON: %d, parsed_json=%p", json_status, parsed_json);
-        snprintf(transport->error_msg, sizeof(transport->error_msg),
-                "Failed to parse metadata JSON: %d", json_status);
-        free(metadata_content);
-        return json_status;
-    }
-    
-    /* Get the timestamp from metadata for data file path */
-    long long timestamp = 0;
-    
-    /* Try to extract data directly from the JSON string for better compatibility */
-    json_error_t error;
-    json_t *root = json_loads((const char*)meta_context.data, 0, &error);
-    if (root) {
-        /* Extract timestamp for latest data file */
-        json_t *timestamp_obj = json_object_get(root, "timestamp");
-        if (json_is_integer(timestamp_obj)) {
-            timestamp = json_integer_value(timestamp_obj);
-            DEBUG_INFO("Found timestamp in JSON: %lld", timestamp);
-            
-            /* Create the data path using the timestamp from metadata */
-            snprintf(data_path, sizeof(data_path), "data_%lld.parquet", timestamp);
-            DEBUG_INFO("Constructed data file name from metadata: %s", data_path);
-        } else {
-            /* Try string representation */
-            json_t *timestamp_str_obj = json_object_get(root, "timestamp");
-            if (json_is_string(timestamp_str_obj)) {
-                const char *ts_str = json_string_value(timestamp_str_obj);
-                timestamp = atoll(ts_str);
-                DEBUG_INFO("Found timestamp string in JSON: %s -> %lld", ts_str, timestamp);
-                
-                /* Create the data path using the timestamp from metadata */
-                snprintf(data_path, sizeof(data_path), "data_%lld.parquet", timestamp);
-                DEBUG_INFO("Constructed data file name from string metadata: %s", data_path);
-            } else {
-                /* Try direct "data_path" field if available */
-                json_t *data_path_obj = json_object_get(root, "data_path");
-                if (json_is_string(data_path_obj)) {
-                    const char *path_str = json_string_value(data_path_obj);
-                    strncpy(data_path, path_str, sizeof(data_path) - 1);
-                data_path[sizeof(data_path) - 1] = '\0';
-                    DEBUG_INFO("Found direct data_path in JSON: %s", data_path);
-                } else {
-                    /* Use the most recent known data file from S3 listing */
-                    /* For now, use a hardcoded fallback based on what we know exists */
-                    strncpy(data_path, "data_1742400636.parquet", sizeof(data_path) - 1);
-                    DEBUG_INFO("Using fallback data path: %s", data_path);
-                }
-            }
-        }
-        
-        /* Clean up Jansson resources */
-        json_decref(root);
-    } else {
-        /* Fallback if JSON parsing fails */
-        DEBUG_ERROR("Failed to parse JSON with Jansson: %s at line %d, column %d", 
-                  error.text, error.line, error.column);
-        
-        /* Use the most recent known data file from S3 listing */
-        strncpy(data_path, "data_1742400636.parquet", sizeof(data_path) - 1);
-        DEBUG_INFO("Using fallback data path after JSON parse failure: %s", data_path);
-    }
-    
-    /* Clean up JSON parsing resources */
-    eb_json_free_parsed(parsed_json);
-    free(metadata_content);
-    
-    /* Construct the data path using timestamp */
-    snprintf(data_path, sizeof(data_path), "data_%lld.parquet", timestamp);
-    DEBUG_INFO("Constructed data file name: %s", data_path);
-    
-    /* Create data key from metadata */
-    char s3_data_key[1024] = {0};
-    
-    /* Make sure s3->prefix doesn't contain query parameters again */
-    clean_prefix = s3->prefix ? strdup(s3->prefix) : NULL;
-    query_pos = clean_prefix ? strchr(clean_prefix, '?') : NULL;
-    if (query_pos) {
-        /* Temporarily null-terminate at the question mark */
-        *query_pos = '\0';
-    }
-    
-    /* Check if prefix already contains a sets/<n>/ structure */
-    prefix_has_sets = false;
-    if (clean_prefix && *clean_prefix) {
-        /* Check specifically for the path ending with sets/set_name */
-        char set_path[512];
-        snprintf(set_path, sizeof(set_path), "sets/%s", set_name_buf);
-        
-        /* Check if the prefix ends with set_path */
-        size_t prefix_len = strlen(clean_prefix);
-        size_t path_len = strlen(set_path);
-        
-        if (prefix_len >= path_len) {
-            const char *end_of_prefix = clean_prefix + prefix_len - path_len;
-            if (strcmp(end_of_prefix, set_path) == 0) {
-                /* Prefix already ends with sets/set_name */
-                prefix_has_sets = true;
-                DEBUG_INFO("Prefix ends with 'sets/%s', avoiding path duplication", set_name_buf);
-            } else {
-                /* Check for generic sets/ structure */
-        const char *sets_pos = strstr(clean_prefix, "sets/");
-        if (sets_pos) {
-            sets_pos += 5; /* Skip "sets/" */
-            const char *slash = strchr(sets_pos, '/');
-            if (slash) {
-                /* Found sets/<n>/ pattern in prefix */
-                prefix_has_sets = true;
-                DEBUG_INFO("Found existing sets/ structure in prefix");
-                    }
-                }
-            }
-        }
-    }
-    
-    /* Construct the S3 key properly */
-    if (clean_prefix && *clean_prefix) {
-        /* Remove any trailing slash from the prefix */
-        size_t prefix_len = strlen(clean_prefix);
-        if (prefix_len > 0 && clean_prefix[prefix_len - 1] == '/') {
-            clean_prefix[prefix_len - 1] = '\0';
-            prefix_len--;
-        }
-        
-        if (prefix_has_sets) {
-            /* Prefix already contains sets structure, just append documents/data_path */
-                snprintf(s3_data_key, sizeof(s3_data_key), "%s/documents/%s", 
-                        clean_prefix, data_path);
-            DEBUG_INFO("Using existing sets structure for data: %s/documents/%s", 
-                        clean_prefix, data_path);
-        } else {
-            /* No sets structure, add it with the provided set name */
-                snprintf(s3_data_key, sizeof(s3_data_key), "%s/sets/%s/documents/%s", 
-                        clean_prefix, set_name_buf, data_path);
-            DEBUG_INFO("Adding sets structure for data: %s/sets/%s/documents/%s", 
-                        clean_prefix, set_name_buf, data_path);
-        }
-    } else {
-        /* Fallback if prefix is empty */
-        snprintf(s3_data_key, sizeof(s3_data_key), "sets/%s/documents/%s", 
-                set_name_buf, data_path);
-        DEBUG_INFO("Using basic path for data: sets/%s/documents/%s", 
-                set_name_buf, data_path);
-    }
-    
-    /* Restore the ? if we modified it */
-    if (query_pos) {
-        *query_pos = '?';
-    }
-    
-    /* Free the duplicated prefix if we created one */
-    if (clean_prefix) {
-        free(clean_prefix);
-    }
-    
-    DEBUG_INFO("S3 key for data: %s", s3_data_key);
-    
-    /* Allocate buffer for the data download */
     void *data_buffer = malloc(size);
     if (!data_buffer) {
         snprintf(transport->error_msg, sizeof(transport->error_msg),
                 "Failed to allocate memory for data download");
         return EB_ERROR_MEMORY;
     }
-    
-    /* Setup state tracking for the download operation */
     struct download_context data_context = {
         .error_code = 0,
         .is_done = false,
@@ -2488,33 +1824,33 @@ static int s3_receive_data(eb_transport_t *transport, void *buffer, size_t size,
         .capacity = size,
         .current_pos = 0
     };
-    
-    /* Create HTTP request for data download */
     struct aws_http_message *data_request = aws_http_message_new_request(s3->allocator);
     if (!data_request) {
         DEBUG_ERROR("Failed to create HTTP request for data download");
         free(data_buffer);
         return EB_ERROR_MEMORY;
     }
-    
-    /* Configure the request */
-    DEBUG_INFO("Setting up data download request for S3 key: %s", s3_data_key);
-    
+    char host_header_value[256];
+    snprintf(host_header_value, sizeof(host_header_value), "%s.s3.%s.amazonaws.com", 
+            s3->bucket, s3->region);
+    struct aws_http_header host_header = {
+        .name = aws_byte_cursor_from_c_str("Host"),
+        .value = aws_byte_cursor_from_c_str(host_header_value),
+        .compression = AWS_HTTP_HEADER_COMPRESSION_USE_CACHE
+    };
     if (aws_http_message_add_header(data_request, host_header) != AWS_OP_SUCCESS) {
         DEBUG_ERROR("Failed to add Host header to data request");
         aws_http_message_release(data_request);
         free(data_buffer);
         return EB_ERROR_GENERIC;
     }
-    
     if (aws_http_message_set_request_method(data_request, aws_http_method_get) != AWS_OP_SUCCESS) {
         DEBUG_ERROR("Failed to set GET method on data request");
         aws_http_message_release(data_request);
         free(data_buffer);
         return EB_ERROR_GENERIC;
     }
-    
-    /* Make sure the path starts with a slash for S3 requests */
+    // Make sure the path starts with a slash for S3 requests
     char s3_data_request_path[1024];
     if (s3_data_key[0] != '/') {
         snprintf(s3_data_request_path, sizeof(s3_data_request_path), "/%s", s3_data_key);
@@ -2522,9 +1858,7 @@ static int s3_receive_data(eb_transport_t *transport, void *buffer, size_t size,
         strncpy(s3_data_request_path, s3_data_key, sizeof(s3_data_request_path)-1);
         s3_data_request_path[sizeof(s3_data_request_path)-1] = '\0';
     }
-    
     DEBUG_INFO("S3 data request path: %s", s3_data_request_path);
-    
     if (aws_http_message_set_request_path(data_request, 
             aws_byte_cursor_from_c_str(s3_data_request_path)) != AWS_OP_SUCCESS) {
         DEBUG_ERROR("Failed to set path on data request: %s", s3_data_request_path);
@@ -2532,10 +1866,6 @@ static int s3_receive_data(eb_transport_t *transport, void *buffer, size_t size,
         free(data_buffer);
         return EB_ERROR_GENERIC;
     }
-    
-    DEBUG_INFO("Data request configured successfully");
-    
-    /* Setup the S3 request options */
     struct aws_s3_meta_request_options data_options = {
         .type = AWS_S3_META_REQUEST_TYPE_GET_OBJECT,
         .message = data_request,
@@ -2543,12 +1873,8 @@ static int s3_receive_data(eb_transport_t *transport, void *buffer, size_t size,
         .body_callback = s3_data_body_cb,
         .finish_callback = s3_data_complete_cb
     };
-    
-    /* Send the request */
-    DEBUG_INFO("Making S3 meta request for data download...");
     struct aws_s3_meta_request *data_meta_request = 
         aws_s3_client_make_meta_request(s3->s3_client, &data_options);
-    
     if (!data_meta_request) {
         DEBUG_ERROR("Failed to create data download request: %s (AWS error: %d)",
                    aws_error_debug_str(aws_last_error()), aws_last_error());
@@ -2556,132 +1882,134 @@ static int s3_receive_data(eb_transport_t *transport, void *buffer, size_t size,
         free(data_buffer);
         return EB_ERROR_CONNECTION;
     }
-    
-    DEBUG_INFO("Data download request created successfully");
-    
-    /* Wait for the download to complete */
     aws_mutex_lock(&mutex);
-    struct timespec data_start_time, data_current_time;
-    clock_gettime(CLOCK_REALTIME, &data_start_time);
-    bool data_timed_out = false;
-    
-    while (!data_context.is_done) {
-        /* Check if the download has completed */
-        if (data_context.is_done) {
-            break;
-        }
-        
-        /* Check for timeout */
-        clock_gettime(CLOCK_REALTIME, &data_current_time);
-        int elapsed_seconds = (data_current_time.tv_sec - data_start_time.tv_sec);
-        
-        if (elapsed_seconds >= 30) { /* 30 second hard timeout */
-            DEBUG_ERROR("S3 data download operation timed out after 30 seconds");
-            data_timed_out = true;
-            break;
-        }
-        
-        /* Log progress periodically */
-        if (elapsed_seconds % 5 == 0 && elapsed_seconds > 0) {
-            DEBUG_INFO("Still waiting for data download to complete... (%d seconds elapsed)", 
-                     elapsed_seconds);
-        }
-        
-        /* Temporarily release the mutex to allow the S3 client to process callbacks */
+    aws_condition_variable_wait_pred(
+        &completion_signal, &mutex, s_is_download_done, &data_context);
     aws_mutex_unlock(&mutex);
-        
-        /* Sleep very briefly to yield CPU and allow event loops to process */
-        usleep(10000); /* 10ms */
-        
-        /* Re-acquire the mutex before checking the condition again */
-        aws_mutex_lock(&mutex);
-        
-        /* Use the condition variable for a short wait */
-        aws_condition_variable_wait_pred(&completion_signal, &mutex, s_is_download_done, &data_context);
-    }
-    
-    /* Check for timeout */
-    if (!data_context.is_done) {
-        DEBUG_ERROR("S3 data download operation timed out");
-        data_timed_out = true;
-    }
-    aws_mutex_unlock(&mutex);
-    
-    /* Check for timeout */
-    if (data_timed_out) {
-        aws_s3_meta_request_release(data_meta_request);
-        aws_http_message_release(data_request);
-        free(data_buffer);
-        snprintf(transport->error_msg, sizeof(transport->error_msg),
-                "S3 data download operation timed out");
-        return EB_ERROR_TIMEOUT;
-    }
-    
-    /* Check the download result */
     if (data_context.error_code != AWS_ERROR_SUCCESS) {
         DEBUG_ERROR("Failed to download data: %s",
                    aws_error_debug_str(data_context.error_code));
         aws_s3_meta_request_release(data_meta_request);
         aws_http_message_release(data_request);
         free(data_buffer);
+        snprintf(transport->error_msg, sizeof(transport->error_msg),
+                "Failed to download data: %s",
+                aws_error_debug_str(data_context.error_code));
         return EB_ERROR_CONNECTION;
     }
-    
-    /* Cleanup data request resources */
-    aws_s3_meta_request_release(data_meta_request);
-    aws_http_message_release(data_request);
-    
-    DEBUG_INFO("Successfully downloaded %zu bytes from S3", data_context.data_size);
-    
-    /* Try to find the parquet transformer for inverse transformation */
-    eb_transformer_t *transformer = eb_find_transformer_by_format("parquet");
-    if (transformer) {
-        DEBUG_INFO("Found parquet transformer, applying inverse transformation");
-        
-        /* Use the transformer to convert the data back from parquet */
-        void *transformed_data = NULL;
-        size_t transformed_size = 0;
-        
-        eb_status_t transform_result = transformer->inverse(
-            transformer,
-            data_buffer,
-            data_context.data_size,
-            &transformed_data,
-            &transformed_size
-        );
-        
-        /* Free the original data as we don't need it anymore */
-        free(data_buffer);
-        
-        if (transform_result != EB_SUCCESS || !transformed_data) {
-            DEBUG_WARN("Inverse transformation from parquet failed");
-            snprintf(transport->error_msg, sizeof(transport->error_msg),
-                    "Failed to transform data from parquet format");
-            return EB_ERROR_TRANSFORMER;
-        } else {
-            /* Copy the transformed data to the output buffer */
-            size_t copy_size = (transformed_size > size) ? size : transformed_size;
-            memcpy(buffer, transformed_data, copy_size);
-            *received = copy_size;
-            
-            /* Free the transformed data */
-            free(transformed_data);
-            
-            DEBUG_INFO("Successfully inverse-transformed data from parquet format");
-        }
-    } else {
-        /* If no transformer is found, use the original data */
-        DEBUG_WARN("Parquet transformer not found for inverse transformation, using original data format");
-        
+    {
+        /* Return raw Parquet buffer to CLI for inverse-transform + metadata extraction */
         size_t copy_size = (data_context.data_size > size) ? size : data_context.data_size;
         memcpy(buffer, data_buffer, copy_size);
         *received = copy_size;
-        
-        /* Free the data */
         free(data_buffer);
+        DEBUG_INFO("Successfully downloaded %zu bytes from S3", *received);
+        return EB_SUCCESS;
     }
-    
-    DEBUG_INFO("Successfully downloaded %zu bytes from S3", *received);
+}
+
+/* Delete refs/objects in the S3 bucket (stub for now) */
+static int s3_delete_refs(eb_transport_t *transport, const char **refs, size_t count) {
+    if (!transport || !transport->data || !refs || count == 0)
+        return EB_ERROR_INVALID_PARAMETER;
+
+    struct s3_data *s3 = (struct s3_data *)transport->data;
+    if (!s3->is_connected) {
+        snprintf(transport->error_msg, sizeof(transport->error_msg),
+                "Not connected to S3");
+        return EB_ERROR_NOT_CONNECTED;
+    }
+
+    char host_header_value[256];
+    snprintf(host_header_value, sizeof(host_header_value), "%s.s3.%s.amazonaws.com", 
+            s3->bucket, s3->region);
+    struct aws_http_header host_header = {
+        .name = aws_byte_cursor_from_c_str("Host"),
+        .value = aws_byte_cursor_from_c_str(host_header_value),
+    };
+
+    for (size_t i = 0; i < count; ++i) {
+        const char *key = refs[i];
+        if (!key || !*key) continue;
+
+        struct aws_http_message *del_message = aws_http_message_new_request(s3->allocator);
+        if (!del_message) {
+            snprintf(transport->error_msg, sizeof(transport->error_msg),
+                    "Failed to create DELETE message for object %s", key);
+            return EB_ERROR_GENERIC;
+        }
+
+        aws_http_message_set_request_method(del_message, aws_http_method_delete);
+
+        char uri_buffer[2048];
+        if (key[0] != '/') {
+            snprintf(uri_buffer, sizeof(uri_buffer), "/%s", key);
+        } else {
+            strncpy(uri_buffer, key, sizeof(uri_buffer)-1);
+            uri_buffer[sizeof(uri_buffer)-1] = '\0';
+        }
+        struct aws_byte_cursor uri_cursor = aws_byte_cursor_from_c_str(uri_buffer);
+        aws_http_message_set_request_path(del_message, uri_cursor);
+        aws_http_message_add_header(del_message, host_header);
+
+        struct s3_operation_context del_context = {
+            .lock = &s_mutex,
+            .signal = &s_cvar,
+            .error_code = 0,
+            .is_done = false
+        };
+
+        struct aws_s3_meta_request_options del_options = {
+            .message = del_message,
+            .user_data = &del_context,
+            .finish_callback = s3_on_s3_operation_finished
+        };
+
+        struct aws_s3_meta_request *del_request = aws_s3_client_make_meta_request(s3->s3_client, &del_options);
+        if (!del_request) {
+            snprintf(transport->error_msg, sizeof(transport->error_msg),
+                    "Failed to create S3 meta request for delete: %s", aws_error_str(aws_last_error()));
+            aws_http_message_release(del_message);
+            return EB_ERROR_GENERIC;
+        }
+
+        aws_mutex_lock(&s_mutex);
+        struct timespec start_time, current_time;
+        clock_gettime(CLOCK_REALTIME, &start_time);
+        bool timed_out = false;
+        int max_wait_seconds = 30;
+        while (!del_context.is_done) {
+            clock_gettime(CLOCK_REALTIME, &current_time);
+            int elapsed_seconds = (current_time.tv_sec - start_time.tv_sec);
+            if (elapsed_seconds >= max_wait_seconds) {
+                timed_out = true;
+                break;
+            }
+            aws_mutex_unlock(&s_mutex);
+            process_events_while_waiting(s3, 100);
+            aws_mutex_lock(&s_mutex);
+            int64_t wait_timeout_ns = 1000000000;
+            aws_condition_variable_wait_for_pred(
+                &s_cvar, 
+                &s_mutex, 
+                wait_timeout_ns, 
+                s_is_operation_done, 
+                &del_context);
+        }
+        aws_mutex_unlock(&s_mutex);
+        aws_s3_meta_request_release(del_request);
+        aws_http_message_release(del_message);
+        if (timed_out) {
+            snprintf(transport->error_msg, sizeof(transport->error_msg),
+                    "S3 delete operation timed out for key: %s", key);
+            return EB_ERROR_TIMEOUT;
+        } else if (del_context.error_code != AWS_ERROR_SUCCESS) {
+            snprintf(transport->error_msg, sizeof(transport->error_msg),
+                    "Failed to delete object %s: error code %d (%s)", 
+                    key, del_context.error_code, aws_error_str(del_context.error_code));
+            return EB_ERROR_CONNECTION;
+        }
+    }
     return EB_SUCCESS;
 }
 
@@ -2691,7 +2019,8 @@ struct transport_ops s3_ops = {
     .send_data = s3_send_data,
     .receive_data = s3_receive_data,
     .disconnect = s3_disconnect,
-    .list_refs = s3_list_refs
+    .list_refs = s3_list_refs,
+    .delete_refs = s3_delete_refs // New: delete operation
 };
 
 int s3_transport_init(void) {

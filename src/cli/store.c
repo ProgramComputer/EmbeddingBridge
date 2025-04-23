@@ -192,12 +192,6 @@ static bool store_bin_data(const char *src_path, const char *dst_path)
         return false;
     }
 
-    // Validate size is multiple of float
-    if (st.st_size % sizeof(float) != 0) {
-        DEBUG_PRINT("Invalid binary size: %ld", (long)st.st_size);
-        return false;
-    }
-
     FILE *src = fopen(src_path, "rb");
     FILE *dst = fopen(dst_path, "wb");
     if (!src || !dst) {
@@ -206,31 +200,18 @@ static bool store_bin_data(const char *src_path, const char *dst_path)
         return false;
     }
 
-    // Copy in chunks of floats for validation
-    float buffer[4096];
-    size_t floats_per_read = sizeof(buffer) / sizeof(float);
-    size_t total_floats = 0;
-
-    while (!feof(src)) {
-        size_t read = fread(buffer, sizeof(float), floats_per_read, src);
-        if (read > 0) {
-            // Validate values
-            for (size_t i = 0; i < read && total_floats < 5; i++) {
-                DEBUG_PRINT("Value[%zu] = %f", total_floats + i, buffer[i]);
-            }
-            
-            if (fwrite(buffer, sizeof(float), read, dst) != read) {
-                DEBUG_PRINT("Write failed");
-                fclose(src);
-                fclose(dst);
-                return false;
-            }
-            total_floats += read;
+    // Copy raw bytes for exact duplication
+    char buffer[4096];
+    size_t bytes_read;
+    while ((bytes_read = fread(buffer, 1, sizeof(buffer), src)) > 0) {
+        if (fwrite(buffer, 1, bytes_read, dst) != bytes_read) {
+            DEBUG_PRINT("Write failed");
+            fclose(src);
+            fclose(dst);
+            return false;
         }
     }
 
-    DEBUG_PRINT("Copied %zu floats", total_floats);
-    
     fclose(src);
     fclose(dst);
     return true;
@@ -327,7 +308,7 @@ int store_from_source(const char *source_file, int argc, char **argv)
         model = get_model(argc, argv);
         if (!model) {
             fprintf(stderr, "error: no model specified\n");
-            fprintf(stderr, "hint: specify a model with --model or configure a default with 'eb config set model.default <name>'\n");
+            fprintf(stderr, "hint: specify a model with --model or configure a default with 'embr config set model.default <name>'\n");
             return 1;
         }
 

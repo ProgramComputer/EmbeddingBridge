@@ -25,6 +25,11 @@
 #include "config.h"
 #include "debug.h"
 #include "remote.h"
+#include "set.h"              // For get_current_set
+#include "../core/path_utils.h" // For find_repo_root
+#include "../core/parquet_transformer.h" // For eb_parquet_extract_metadata_json
+// TODO: Add the correct header for extract_file_type_from_parquet
+// #include "parquet_transform.h" // For extract_file_type_from_parquet
 
 /* Define PATH_MAX if not already defined */
 #ifndef PATH_MAX
@@ -32,13 +37,12 @@
 #endif
 
 static void print_usage(void) {
-    printf("Usage: embr get [-h] [-o <filename>] <destination_dir> <hash>\n\n");
+    printf("Usage: embr get [-h] [-f] [-v] [-q] <output_directory> <hash>\n\n");
     printf("Download an embedding file by hash to local destination\n\n");
     printf("Arguments:\n");
-    printf("  destination_dir   Directory where the embedding will be saved\n");
+    printf("  output_directory  Directory where the embedding will be saved\n");
     printf("  hash              Hash or short hash of the embedding to download\n\n");
     printf("Options:\n");
-    printf("  -o, --out <filename>      Specify exact output filename (used as-is)\n");
     printf("  -f, --force              Force download even if file exists\n");
     printf("  -v, --verbose            Show detailed output\n");
     printf("  -q, --quiet              Suppress output messages\n");
@@ -75,8 +79,8 @@ static bool read_metadata(const char *meta_path, char *source_file, char *file_t
         } else if (strncmp(line, "file_type=", 10) == 0) {
             strncpy(file_type, line + 10, 32 - 1);
             found_type = true;
-        } else if (strncmp(line, "provider=", 9) == 0) {
-            strncpy(provider, line + 9, 32 - 1);
+        } else if (strncmp(line, "model=", 6) == 0) {
+            strncpy(provider, line + 6, 32 - 1);
             found_provider = true;
         }
     }
@@ -100,25 +104,34 @@ static bool resolve_hash(const char *repo_path, const char *short_hash, char *fu
     
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
+        // Skip non-regular files via stat()
+        {
+            char fullpath[PATH_MAX];
+            snprintf(fullpath, sizeof(fullpath), "%s/%s", objects_dir, entry->d_name);
+            struct stat st;
+            if (stat(fullpath, &st) != 0 || !S_ISREG(st.st_mode))
+                continue;
+        }
         // Only look at .raw or .meta files
-        if (entry->d_type == DT_REG) {
-            char *ext = strrchr(entry->d_name, '.');
-            if (ext && (strcmp(ext, ".raw") == 0 || strcmp(ext, ".meta") == 0)) {
-                // Remove extension for comparison
-                *ext = '\0';
-                
-                // Compare with short hash
-                if (strncmp(entry->d_name, short_hash, hash_len) == 0) {
-                    if (found) {
-                        // Hash is ambiguous (multiple matches)
-                        closedir(dir);
-                        return false;
-                    }
-                    
-                    strncpy(full_hash, entry->d_name, hash_size - 1);
-                    full_hash[hash_size - 1] = '\0';
-                    found = true;
+        char namebuf[PATH_MAX];
+        strncpy(namebuf, entry->d_name, sizeof(namebuf));
+        namebuf[sizeof(namebuf)-1] = '\0';
+        char *ext = strrchr(namebuf, '.');
+        if (ext && (strcmp(ext, ".raw") == 0 || strcmp(ext, ".meta") == 0)) {
+            *ext = '\0';
+            // Debug print
+            DEBUG_INFO("resolve_hash: namebuf='%s', short_hash='%s', hash_len=%zu", namebuf, short_hash, hash_len);
+            int cmp = strncmp(namebuf, short_hash, hash_len);
+            DEBUG_INFO("resolve_hash: strncmp result = %d", cmp);
+            if (cmp == 0) {
+                if (found) {
+                    // Hash is ambiguous (multiple matches)
+                    closedir(dir);
+                    return false;
                 }
+                strncpy(full_hash, namebuf, hash_size - 1);
+                full_hash[hash_size - 1] = '\0';
+                found = true;
             }
         }
     }
@@ -131,45 +144,48 @@ static bool resolve_hash(const char *repo_path, const char *short_hash, char *fu
  * Check local repositories for the hash
  */
 static bool find_local_hash(const char *hash, char *full_hash, char *repo_path, char *meta_path, char *object_path) {
+    DEBUG_INFO("find_local_hash: entered with hash='%s'", hash);
     // Check current directory first
     char cwd[PATH_MAX];
     if (!getcwd(cwd, sizeof(cwd))) {
         return false;
     }
-    
-    // Look in current directory's .embr
-    char local_repo[PATH_MAX];
-    snprintf(local_repo, sizeof(local_repo), "%s", cwd);
-    
-    char local_meta[PATH_MAX];
-    char local_object[PATH_MAX];
-    
-    // Check if we need to resolve the hash
-    char resolved_hash[65];
-    if (strlen(hash) < 64) {
-        if (!resolve_hash(local_repo, hash, resolved_hash, sizeof(resolved_hash))) {
-            return false;
-        }
-    } else {
-        strncpy(resolved_hash, hash, sizeof(resolved_hash) - 1);
-        resolved_hash[sizeof(resolved_hash) - 1] = '\0';
+    // Use store API for hash resolution
+    char resolved_hash[65] = {0};
+    char *repo_root = find_repo_root(".");
+    if (!repo_root) {
+        return false;
     }
-    
+    eb_store_t *store = NULL;
+    eb_store_config_t config = { .root_path = repo_root };
+    if (eb_store_init(&config, &store) != EB_SUCCESS) {
+        free(repo_root);
+        return false;
+    }
+    eb_status_t status = eb_store_resolve_hash(store, hash, resolved_hash, sizeof(resolved_hash));
+    eb_store_destroy(store);
+    free(repo_root);
+    if (status != EB_SUCCESS) {
+        return false;
+    }
     // Path to metadata and object files
-    snprintf(local_meta, sizeof(local_meta), "%s/.embr/objects/%s.meta", local_repo, resolved_hash);
-    snprintf(local_object, sizeof(local_object), "%s/.embr/objects/%s.raw", local_repo, resolved_hash);
-    
+    snprintf(meta_path, PATH_MAX, "%s/.embr/objects/%s.meta", cwd, resolved_hash);
+    snprintf(object_path, PATH_MAX, "%s/.embr/objects/%s.raw", cwd, resolved_hash);
+    // Debug prints
+    DEBUG_INFO("find_local_hash: resolved_hash='%s'", resolved_hash);
+    DEBUG_INFO("find_local_hash: local_meta='%s'", meta_path);
+    DEBUG_INFO("find_local_hash: local_object='%s'", object_path);
+    int meta_exists = access(meta_path, F_OK);
+    int object_exists = access(object_path, F_OK);
+    DEBUG_INFO("find_local_hash: access(local_meta)=%d, access(local_object)=%d", meta_exists, object_exists);
     // Check if files exist
-    if (access(local_meta, F_OK) == 0 && access(local_object, F_OK) == 0) {
+    if (meta_exists == 0 && object_exists == 0) {
         strncpy(full_hash, resolved_hash, 65);
-        strncpy(repo_path, local_repo, PATH_MAX);
-        strncpy(meta_path, local_meta, PATH_MAX);
-        strncpy(object_path, local_object, PATH_MAX);
+        strncpy(repo_path, cwd, PATH_MAX);
+        DEBUG_INFO("find_local_hash: success, returning true");
         return true;
     }
-    
-    // TODO: Check other local repositories if needed
-    
+    DEBUG_INFO("find_local_hash: returning false");
     return false;
 }
 
@@ -177,22 +193,212 @@ static bool find_local_hash(const char *hash, char *full_hash, char *repo_path, 
  * Check remote repositories for the hash
  */
 static bool find_remote_hash(const char *hash, char *full_hash, char *temp_meta_path, char *temp_object_path) {
-    // TODO: Implement remote repository search and download
-    // This would contact configured remote servers to find and download the hash
-    
-    // Not implemented yet
-    return false;
+    eb_status_t status;
+    // Initialize remote subsystem
+    status = eb_remote_init();
+    if (status != EB_SUCCESS) {
+        return false;
+    }
+    // Get list of remotes
+    char **remotes = NULL;
+    int rem_count = 0;
+    status = eb_remote_list(&remotes, &rem_count);
+    if (status != EB_SUCCESS || rem_count == 0) {
+        eb_remote_shutdown();
+        return false;
+    }
+    // Get current set name
+    char set_name[128] = {0};
+    if (get_current_set(set_name, sizeof(set_name)) != EB_SUCCESS || set_name[0] == '\0') {
+        for (int i = 0; i < rem_count; i++) free(remotes[i]);
+        free(remotes);
+        eb_remote_shutdown();
+        return false;
+    }
+    // Resolve full hash if short
+    char resolved_hash[65] = {0};
+    bool hash_resolved = false;
+    size_t hash_len = strlen(hash);
+    for (int i = 0; i < rem_count; i++) {
+        char prefix[256];
+        snprintf(prefix, sizeof(prefix), "sets/%s/documents", set_name);
+        char **files = NULL;
+        size_t file_count = 0;
+        status = eb_remote_list_files(remotes[i], prefix, &files, &file_count);
+        if (status == EB_SUCCESS && files) {
+            for (size_t j = 0; j < file_count; j++) {
+                char *fname = files[j];
+                // Strip any path prefix, use only the basename
+                char *base = strrchr(fname, '/');
+                if (base) base++;
+                else base = fname;
+                char *dot = strrchr(base, '.');
+                if (!dot || strcmp(dot, ".parquet") != 0) continue;
+                size_t name_len = dot - base;
+                if (name_len >= hash_len && strncmp(base, hash, hash_len) == 0) {
+                    if (hash_resolved) {
+                        // Ambiguous prefix
+                        for (size_t k = 0; k < file_count; k++) free(files[k]);
+                        free(files);
+                        for (int k = 0; k < rem_count; k++) free(remotes[k]);
+                        free(remotes);
+                        eb_remote_shutdown();
+                        return false;
+                    }
+                    strncpy(resolved_hash, base, name_len);
+                    resolved_hash[name_len] = '\0';
+                    hash_resolved = true;
+                }
+            }
+            for (size_t j = 0; j < file_count; j++) free(files[j]);
+            free(files);
+        }
+        if (hash_resolved) break;
+    }
+    if (!hash_resolved) {
+        for (int i = 0; i < rem_count; i++) free(remotes[i]);
+        free(remotes);
+        eb_remote_shutdown();
+        return false;
+    }
+    strncpy(full_hash, resolved_hash, 64);
+    full_hash[64] = '\0';
+    bool downloaded = false;
+    for (int i = 0; i < rem_count; i++) {
+        char remote_parquet[PATH_MAX];
+        snprintf(remote_parquet, sizeof(remote_parquet), "sets/%s/documents/%s.parquet", set_name, resolved_hash);
+        void *parquet_data = NULL;
+        size_t parquet_size = 0;
+        status = eb_remote_pull(remotes[i], remote_parquet, &parquet_data, &parquet_size);
+        if (status != EB_SUCCESS || !parquet_data) continue;
+        char parquet_template[] = "/tmp/embr_parquet_XXXXXX";
+        int fd_parquet = mkstemp(parquet_template);
+        if (fd_parquet < 0) {
+            free(parquet_data);
+            continue;
+        }
+        if (write(fd_parquet, parquet_data, parquet_size) != (ssize_t)parquet_size) {
+            close(fd_parquet);
+            free(parquet_data);
+            continue;
+        }
+        close(fd_parquet);
+
+        // Set raw output path to the Parquet temp file before inverse-transform
+        strncpy(temp_object_path, parquet_template, PATH_MAX);
+
+        // Inverse-transform Parquet to .raw
+        eb_transformer_t *transformer = eb_find_transformer_by_format("parquet");
+        if (transformer) {
+            void *original_data = NULL;
+            size_t original_size = 0;
+            eb_status_t inv_status = eb_inverse_transform(transformer, parquet_data, parquet_size, &original_data, &original_size);
+
+            if (inv_status == EB_SUCCESS && original_data) {
+                FILE *raw_fp = fopen(temp_object_path, "wb");
+                if (raw_fp) {
+                    fwrite(original_data, 1, original_size, raw_fp);
+                    fclose(raw_fp);
+                }
+                free(original_data);
+            }
+        }
+
+        // Prepare a temporary metadata file for downstream parsing
+        char meta_template[] = "/tmp/embr_meta_XXXXXX";
+        int fd_meta = mkstemp(meta_template);
+        if (fd_meta < 0) {
+            unlink(parquet_template);
+            free(parquet_data);
+            continue;
+        }
+        close(fd_meta);
+        strncpy(temp_meta_path, meta_template, PATH_MAX);
+
+        // Extract metadata JSON from the Parquet buffer
+        char *metadata_json = eb_parquet_extract_metadata_json(parquet_data, parquet_size);
+        free(parquet_data);
+        if (!metadata_json) {
+            unlink(parquet_template);
+            continue;
+        }
+
+        // Parse metadata JSON and convert to key=value format
+        {
+            char source_file_buf[PATH_MAX] = {0};
+            char file_type_buf[32] = {0};
+            char provider_buf[32] = {0};
+            const char *p;
+            // Extract 'source'
+            p = strstr(metadata_json, "\"source\":\"");
+            if (p) {
+                p += strlen("\"source\":\"");
+                const char *q = strchr(p, '"');
+                if (q) {
+                    size_t len = q - p;
+                    if (len >= sizeof(source_file_buf)) len = sizeof(source_file_buf) - 1;
+                    strncpy(source_file_buf, p, len);
+                    source_file_buf[len] = '\0';
+                }
+            }
+            // Extract 'file_type'
+            p = strstr(metadata_json, "\"file_type\":\"");
+            if (p) {
+                p += strlen("\"file_type\":\"");
+                const char *q = strchr(p, '"');
+                if (q) {
+                    size_t len = q - p;
+                    if (len >= sizeof(file_type_buf)) len = sizeof(file_type_buf) - 1;
+                    strncpy(file_type_buf, p, len);
+                    file_type_buf[len] = '\0';
+                }
+            }
+            // Extract 'provider' or fallback to 'model'
+            p = strstr(metadata_json, "\"provider\":\"");
+            if (!p) {
+                p = strstr(metadata_json, "\"model\":\"");
+            }
+            if (p) {
+                if (strstr(p, "\"provider\":\"") == p) {
+                    p += strlen("\"provider\":\"");
+                } else {
+                    p += strlen("\"model\":\"");
+                }
+                const char *q = strchr(p, '"');
+                if (q) {
+                    size_t len = q - p;
+                    if (len >= sizeof(provider_buf)) len = sizeof(provider_buf) - 1;
+                    strncpy(provider_buf, p, len);
+                    provider_buf[len] = '\0';
+                }
+            }
+            FILE *meta_fp2 = fopen(temp_meta_path, "w");
+            if (meta_fp2) {
+                if (source_file_buf[0]) fprintf(meta_fp2, "source_file=%s\n", source_file_buf);
+                if (file_type_buf[0])   fprintf(meta_fp2, "file_type=%s\n", file_type_buf);
+                if (provider_buf[0])    fprintf(meta_fp2, "model=%s\n", provider_buf);
+                fclose(meta_fp2);
+            }
+        }
+        free(metadata_json);
+
+        downloaded = true;
+        break;
+    }
+    for (int i = 0; i < rem_count; i++) free(remotes[i]);
+    free(remotes);
+    eb_remote_shutdown();
+    return downloaded;
 }
 
 /*
  * Handle getting a file by hash
  */
 static int get_embedding_by_hash(
-    const char *dest_dir, 
+    const char *dest_dir,
     const char *hash,
-    const char *output_filename,
-    bool force, 
-    bool verbose, 
+    bool force,
+    bool verbose,
     bool quiet
 ) {
     // Check if destination directory exists
@@ -237,40 +443,40 @@ static int get_embedding_by_hash(
     char source_file[PATH_MAX] = {0};
     char file_type[32] = {0};
     char provider[32] = {0};
-    
+    DEBUG_INFO("About to read metadata: src_meta='%s'", src_meta);
     if (!read_metadata(src_meta, source_file, file_type, provider)) {
         if (!quiet) fprintf(stderr, "Error: Failed to read metadata for hash '%s'\n", hash);
+        DEBUG_INFO("read_metadata failed for src_meta='%s'", src_meta);
         return 1;
     }
-    
-    // Generate output filename if not specified
+    DEBUG_INFO("Metadata read: source_file='%s', file_type='%s', model='%s'", source_file, file_type, provider);
+    // Always generate output filename in destination_dir
     char final_output[PATH_MAX] = {0};
-    if (output_filename) {
-        // Use the output filename exactly as provided by the user, without modifying extension
-        snprintf(final_output, sizeof(final_output), "%s/%s", dest_dir, output_filename);
-    } else {
-        // Use basename of original source file + hash + file type
-        char *src_basename = basename(strdup(source_file));
+    {
+        char *src_dup = strdup(source_file);
+        char *src_basename = basename(src_dup);
+        DEBUG_INFO("src_basename='%s' from source_file='%s'", src_basename, source_file);
         char *dot = strrchr(src_basename, '.');
-        if (dot) *dot = '\0'; // Remove extension
-        
-        snprintf(final_output, sizeof(final_output), "%s/%s_%s.%s", 
-                dest_dir, src_basename, hash, file_type);
-        
-        free(src_basename);
+        if (dot) *dot = '\0';
+        snprintf(final_output, sizeof(final_output), "%s/%s_%s.%s",
+                 dest_dir, src_basename, hash, file_type);
+        DEBUG_INFO("final_output='%s'", final_output);
+        free(src_dup);
     }
-    
     // Check if output file already exists
     if (!force && access(final_output, F_OK) == 0) {
         if (!quiet) fprintf(stderr, "Error: Output file '%s' already exists. Use --force to overwrite.\n", final_output);
+        DEBUG_INFO("Output file already exists: '%s'", final_output);
         return 1;
     }
-    
     // Copy the embedding file
+    DEBUG_INFO("About to copy src_object='%s' to final_output='%s'", src_object, final_output);
     if (fs_copy_file(src_object, final_output) != 0) {
         if (!quiet) fprintf(stderr, "Error: Failed to copy embedding to '%s'\n", final_output);
+        DEBUG_INFO("fs_copy_file failed: src_object='%s', final_output='%s'", src_object, final_output);
         return 1;
     }
+    DEBUG_INFO("File copy succeeded: '%s'", final_output);
     
     if (verbose) {
         printf("Hash: %s\n", full_hash);
@@ -295,49 +501,53 @@ static int get_embedding_by_hash(
  * Implementation of the get command
  */
 int cmd_get(int argc, char **argv) {
+    // argv[0] is "get", skip it
+    if (argc > 0) {
+        argc--;
+        argv++;
+    }
     char *dest_dir = NULL;
     char *hash = NULL;
-    char *output_filename = NULL;
     bool force = false;
     bool verbose = false;
     bool quiet = false;
     
-    /* Parse arguments */
-    int i;
-    for (i = 0; i < argc; i++) {
-        if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+    // Parse flags (options start with '-')
+    int idx = 0;
+    for (; idx < argc; idx++) {
+        const char *arg = argv[idx];
+        if (strcmp(arg, "-h") == 0 || strcmp(arg, "--help") == 0) {
             print_usage();
             return 0;
-        } else if (strcmp(argv[i], "-o") == 0 || strcmp(argv[i], "--out") == 0) {
-            if (i + 1 < argc) {
-                output_filename = argv[++i];
-            } else {
-                fprintf(stderr, "Error: Missing output filename\n");
-                return 1;
-            }
-        } else if (strcmp(argv[i], "-f") == 0 || strcmp(argv[i], "--force") == 0) {
+        } else if (strcmp(arg, "-f") == 0 || strcmp(arg, "--force") == 0) {
             force = true;
-        } else if (strcmp(argv[i], "-v") == 0 || strcmp(argv[i], "--verbose") == 0) {
+        } else if (strcmp(arg, "-v") == 0 || strcmp(arg, "--verbose") == 0) {
             verbose = true;
-        } else if (strcmp(argv[i], "-q") == 0 || strcmp(argv[i], "--quiet") == 0) {
+        } else if (strcmp(arg, "-q") == 0 || strcmp(arg, "--quiet") == 0) {
             quiet = true;
-        } else if (dest_dir == NULL) {
-            dest_dir = argv[i];
-        } else if (hash == NULL) {
-            hash = argv[i];
         } else {
-            fprintf(stderr, "Error: Too many arguments\n");
-            print_usage();
-            return 1;
+            break;  // first non-flag
         }
     }
-    
-    /* Check for required arguments */
+    // Next argument is output directory
+    if (idx < argc) {
+        dest_dir = argv[idx++];
+    }
+    // Next argument is hash
+    if (idx < argc) {
+        hash = argv[idx++];
+    }
+    // Too many arguments?
+    if (idx < argc) {
+        fprintf(stderr, "Error: Too many arguments\n");
+        print_usage();
+        return 1;
+    }
+    // Missing required arguments?
     if (!dest_dir || !hash) {
         fprintf(stderr, "Error: Missing required arguments\n");
         print_usage();
         return 1;
     }
-    
-    return get_embedding_by_hash(dest_dir, hash, output_filename, force, verbose, quiet);
+    return get_embedding_by_hash(dest_dir, hash, force, verbose, quiet);
 } 

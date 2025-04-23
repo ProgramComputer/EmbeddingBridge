@@ -26,6 +26,7 @@
 #include "debug.h"
 #include "store.h"
 #include "compress.h"
+#include "path_utils.h"
 
 #ifndef PATH_MAX
 #define PATH_MAX 4096
@@ -414,11 +415,11 @@ static eb_status_t write_object(
 
 /* Add this function if it doesn't exist */
 static eb_status_t append_to_history(const char* root, const char* source, const char* hash, const char* provider) {
-    char log_path[PATH_MAX];
-    snprintf(log_path, sizeof(log_path), "%s/.embr/log", root);
-    
+    // Use per-set log file instead of global log
+    char* log_path = get_current_set_log_path();
     // Create history file if it doesn't exist
     FILE* f = fopen(log_path, "a+");
+    free(log_path);
     if (!f) {
         return EB_ERROR_FILE_IO;
     }
@@ -549,8 +550,8 @@ eb_status_t eb_store_vector(
         }
         
         // Then update index (overwrite mode to keep only latest)
-        char index_path[PATH_MAX];
-        snprintf(index_path, sizeof(index_path), "%s/.embr/index", store->storage_path);
+        // Use per-set index file instead of global index
+        char* index_path = get_current_set_index_path();
         
         // Read current index
         FILE* f = fopen(index_path, "r");
@@ -583,6 +584,7 @@ eb_status_t eb_store_vector(
             fprintf(f, "%s %s\n", source_file, hex_hash);
             fclose(f);
         }
+        free(index_path);
     }
     
     eb_metadata_destroy(new_metadata);
@@ -1724,8 +1726,8 @@ eb_status_t eb_store_get_latest(eb_store_t* store, const char* file, eb_stored_v
     if (meta_file) {
         char line[1024];
         while (fgets(line, sizeof(line), meta_file)) {
-            if (strncmp(line, "provider=", 9) == 0) {
-                provider = strdup(line + 9);
+            if (strncmp(line, "model=", strlen("model=")) == 0) {
+                provider = strdup(line + strlen("model="));
                 // Remove newline if present
                 size_t len = strlen(provider);
                 if (len > 0 && provider[len-1] == '\n') {
@@ -1878,10 +1880,10 @@ eb_status_t get_current_hash(const char* root, const char* source, char* hash_ou
         return EB_ERROR_INVALID_INPUT;
     }
 
-    char index_path[PATH_MAX];
-    snprintf(index_path, sizeof(index_path), "%s/.embr/index", root);
-
+    // Use per-set index file
+    char* index_path = get_current_set_index_path();
     FILE* fp = fopen(index_path, "r");
+    free(index_path);
     if (!fp) {
         return EB_ERROR_NOT_FOUND;
     }
@@ -2016,20 +2018,21 @@ eb_status_t store_embedding_file(const char* embedding_path, const char* source_
     fprintf(fp, "source_file=%s\n", source_file);
     fprintf(fp, "timestamp=%ld\n", now);
     fprintf(fp, "file_type=%s\n", strrchr(embedding_path, '.') + 1);
-    fprintf(fp, "provider=%s\n", provider ? provider : "unknown");  // Use provided model
+    fprintf(fp, "model=%s\n", provider ? provider : "unknown");  // Use provided model
     fclose(fp);
 
     // Update index - read existing index, filter out old entries for same file+model, then write back
-    char index_path[PATH_MAX];
-    char temp_index_path[PATH_MAX];
-    snprintf(index_path, sizeof(index_path), "%s/.embr/index", base_dir);
-    snprintf(temp_index_path, sizeof(temp_index_path), "%s/.embr/index.tmp", base_dir);
+    char* index_path = get_current_set_index_path();
+    char* temp_index_path = malloc(strlen(index_path) + 5); // ".tmp" + null
+    sprintf(temp_index_path, "%s.tmp", index_path);
     
     FILE* fp_in = fopen(index_path, "r");
     FILE* fp_out = fopen(temp_index_path, "w");
     
     if (!fp_out) {
         if (fp_in) fclose(fp_in);
+        free(index_path);
+        free(temp_index_path);
         return EB_ERROR_FILE_IO;
     }
     
@@ -2055,9 +2058,9 @@ eb_status_t store_embedding_file(const char* embedding_path, const char* source_
                         while (fgets(meta_line, sizeof(meta_line), meta_fp)) {
                             meta_line[strcspn(meta_line, "\n")] = 0;
                             
-                            if (strncmp(meta_line, "provider=", 9) == 0) {
+                            if (strncmp(meta_line, "model=", strlen("model=")) == 0) {
                                 char idx_provider[32];
-                                if (sscanf(meta_line, "provider=%s", idx_provider) == 1) {
+                                if (sscanf(meta_line, "model=%s", idx_provider) == 1) {
                                     if (provider && strcmp(idx_provider, provider) == 0) {
                                         same_provider = true;
                                         break;
@@ -2087,8 +2090,12 @@ eb_status_t store_embedding_file(const char* embedding_path, const char* source_
     
     // Replace the old index with the new one
     if (rename(temp_index_path, index_path) != 0) {
+        free(index_path);
+        free(temp_index_path);
         return EB_ERROR_FILE_IO;
     }
+    free(index_path);
+    free(temp_index_path);
 
     // Update history
     eb_status_t history_status = append_to_history(base_dir, source_file, hash_str, provider);
@@ -2097,22 +2104,18 @@ eb_status_t store_embedding_file(const char* embedding_path, const char* source_
     }
 
     // Create refs/models directory if it doesn't exist
-    char refs_dir[PATH_MAX];
-    snprintf(refs_dir, sizeof(refs_dir), "%s/.embr/refs", base_dir);
-    if (mkdir_p(refs_dir) != 0) {
-        fprintf(stderr, "Warning: Failed to create refs directory\n");
+    char* model_refs_dir = get_current_set_model_refs_dir();
+    if (!model_refs_dir) {
+        fprintf(stderr, "Warning: Failed to get model refs dir for current set\n");
+    } else {
+        if (mkdir_p(model_refs_dir) != 0) {
+            fprintf(stderr, "Warning: Failed to create models directory\n");
+        }
     }
     
-    char models_dir[PATH_MAX];
-    snprintf(models_dir, sizeof(models_dir), "%s/.embr/refs/models", base_dir);
-    if (mkdir_p(models_dir) != 0) {
-        fprintf(stderr, "Warning: Failed to create models directory\n");
-    }
-    
-    // Update model reference file
-    if (provider) {
+    if (provider && model_refs_dir) {
         char model_ref_path[PATH_MAX];
-        snprintf(model_ref_path, sizeof(model_ref_path), "%s/.embr/refs/models/%s", base_dir, provider);
+        snprintf(model_ref_path, sizeof(model_ref_path), "%s/%s", model_refs_dir, provider);
         
         // Read existing model references first
         FILE* model_read_fp = fopen(model_ref_path, "r");
@@ -2164,6 +2167,7 @@ eb_status_t store_embedding_file(const char* embedding_path, const char* source_
             fclose(model_fp);
         }
     }
+    if (model_refs_dir) free(model_refs_dir);
 
     // Update HEAD file to contain only the current set name, not model references
     char head_path[PATH_MAX];
@@ -2328,10 +2332,10 @@ static eb_status_t copy_file(const char* src, const char* dst) {
 /* Get version history for a file */
 eb_status_t get_version_history(const char* root, const char* source, 
                               eb_stored_vector_t** out_versions, size_t* out_count) {
-    char log_path[PATH_MAX];
-    snprintf(log_path, sizeof(log_path), "%s/.embr/log", root);
-    
+    // Use per-set log file
+    char* log_path = get_current_set_log_path();
     FILE* f = fopen(log_path, "r");
+    free(log_path);
     if (!f) {
         *out_versions = NULL;
         *out_count = 0;
@@ -2600,94 +2604,95 @@ eb_status_t get_current_hash_with_model(const char* root, const char* source, co
     DEBUG_PRINT("get_current_hash_with_model: Using relative source path: %s\n", rel_source);
 
     // First check refs/models directory
-    char model_ref_path[PATH_MAX];
-    snprintf(model_ref_path, sizeof(model_ref_path), "%s/.embr/refs/models/%s", root, model);
-    DEBUG_PRINT("get_current_hash_with_model: Checking model ref file: %s\n", model_ref_path);
-
-    FILE* model_fp = fopen(model_ref_path, "r");
-    if (model_fp) {
-        char line[PATH_MAX + 65]; // Hash (64) + space + path + null terminator
-        bool found = false;
-        
-        while (fgets(line, sizeof(line), model_fp)) {
-            // Remove any trailing newline
-            line[strcspn(line, "\n")] = 0;
+    char* model_refs_dir = get_current_set_model_refs_dir();
+    if (!model_refs_dir) {
+        DEBUG_PRINT("get_current_hash_with_model: Failed to get model refs dir for current set\n");
+    } else {
+        char model_ref_path[PATH_MAX];
+        snprintf(model_ref_path, sizeof(model_ref_path), "%s/%s", model_refs_dir, model);
+        DEBUG_PRINT("get_current_hash_with_model: Checking model ref file: %s\n", model_ref_path);
+        FILE* model_fp = fopen(model_ref_path, "r");
+        if (model_fp) {
+            char line[PATH_MAX + 65]; // Hash (64) + space + path + null terminator
+            bool found = false;
             
-            char file_hash[65];
-            char file_path[PATH_MAX];
-            
-            if (sscanf(line, "%s %s", file_hash, file_path) == 2) {
-                if (strcmp(file_path, rel_source) == 0) {
-                    // Found a match for this file
-                    DEBUG_PRINT("get_current_hash_with_model: Found hash in model ref for file %s: %s\n", 
-                              rel_source, file_hash);
-                    strncpy(hash_out, file_hash, hash_size - 1);
-                    hash_out[hash_size - 1] = '\0';
-                    found = true;
-                    break;
-                }
-            } else if (strlen(line) > 0 && !strchr(line, ' ')) {
-                // For backward compatibility - if no space in line, assume it's just a hash
-                // from the old format
-                DEBUG_PRINT("get_current_hash_with_model: Found old-format hash in model ref: %s\n", line);
+            while (fgets(line, sizeof(line), model_fp)) {
+                // Remove any trailing newline
+                line[strcspn(line, "\n")] = 0;
                 
-                // Only use this hash if we can verify it belongs to this file
-                bool hash_verified = false;
+                char file_hash[65];
+                char file_path[PATH_MAX];
                 
-                // Check log file to verify the hash belongs to this file
-                char log_path[PATH_MAX];
-                snprintf(log_path, sizeof(log_path), "%s/.embr/log", root);
-                DEBUG_PRINT("get_current_hash_with_model: Verifying hash in log: %s\n", log_path);
-                
-                FILE* log_fp = fopen(log_path, "r");
-                if (log_fp) {
-                    char log_line[2048];
-                    
-                    while (fgets(log_line, sizeof(log_line), log_fp)) {
-                        char timestamp[32], log_hash[65], log_file[PATH_MAX], provider[32];
-                        log_line[strcspn(log_line, "\n")] = 0;
-                        
-                        if (sscanf(log_line, "%s %s %s %s", timestamp, log_hash, log_file, provider) == 4) {
-                            if (strcmp(log_file, rel_source) == 0 && 
-                                strcmp(provider, model) == 0 && 
-                                strcmp(log_hash, line) == 0) {
-                                // Found a matching entry for this file, model, and hash
-                                hash_verified = true;
-                                break;
-                            }
-                        }
-                    }
-                    fclose(log_fp);
-                    
-                    if (hash_verified) {
-                        // Hash is valid for this file
-                        strncpy(hash_out, line, hash_size - 1);
+                if (sscanf(line, "%s %s", file_hash, file_path) == 2) {
+                    if (strcmp(file_path, rel_source) == 0) {
+                        // Found a match for this file
+                        DEBUG_PRINT("get_current_hash_with_model: Found hash in model ref for file %s: %s\n", 
+                                  rel_source, file_hash);
+                        strncpy(hash_out, file_hash, hash_size - 1);
                         hash_out[hash_size - 1] = '\0';
                         found = true;
                         break;
                     }
+                } else if (strlen(line) > 0 && !strchr(line, ' ')) {
+                    // For backward compatibility - if no space in line, assume it's just a hash
+                    // from the old format
+                    DEBUG_PRINT("get_current_hash_with_model: Found old-format hash in model ref: %s\n", line);
+                    
+                    // Only use this hash if we can verify it belongs to this file
+                    bool hash_verified = false;
+                    
+                    // Use per-set log file for history lookup
+                    char* log_path = get_current_set_log_path();
+                    DEBUG_PRINT("get_current_hash_with_model: Verifying hash in log: %s\n", log_path);
+                    FILE* log_fp = fopen(log_path, "r");
+                    if (log_fp) {
+                        char log_line[2048];
+                        
+                        while (fgets(log_line, sizeof(log_line), log_fp)) {
+                            char timestamp[32], log_hash[65], log_file[PATH_MAX], provider[32];
+                            log_line[strcspn(log_line, "\n")] = 0;
+                            
+                            if (sscanf(log_line, "%s %s %s %s", timestamp, log_hash, log_file, provider) == 4) {
+                                if (strcmp(log_file, rel_source) == 0 && 
+                                    strcmp(provider, model) == 0 && 
+                                    strcmp(log_hash, line) == 0) {
+                                    // Found a matching entry for this file, model, and hash
+                                    hash_verified = true;
+                                    break;
+                                }
+                            }
+                        }
+                        fclose(log_fp);
+                        free(log_path);
+                        
+                        if (hash_verified) {
+                            // Hash is valid for this file
+                            strncpy(hash_out, line, hash_size - 1);
+                            hash_out[hash_size - 1] = '\0';
+                            found = true;
+                            break;
+                        }
+                    }
                 }
             }
+            
+            fclose(model_fp);
+            
+            if (found) {
+                free(model_refs_dir);
+                return EB_SUCCESS;
+            }
+            DEBUG_PRINT("get_current_hash_with_model: No matching entry found in model ref file\n");
         }
-        
-        fclose(model_fp);
-        
-        if (found) {
-            return EB_SUCCESS;
-        }
-        
-        DEBUG_PRINT("get_current_hash_with_model: No matching entry found in model ref file\n");
-    } else {
-        DEBUG_PRINT("get_current_hash_with_model: Model ref file not found, checking index\n");
+        if (model_refs_dir) free(model_refs_dir);
     }
 
     // Removed HEAD file check as it's not needed and used by another command
 
     // If not found in refs/models, check index file for this source file and model
-    char index_path[PATH_MAX];
-    snprintf(index_path, sizeof(index_path), "%s/.embr/index", root);
+    // Use per-set index file
+    char* index_path = get_current_set_index_path();
     DEBUG_PRINT("get_current_hash_with_model: Checking index file: %s\n", index_path);
-
     FILE* index_fp = fopen(index_path, "r");
     if (index_fp) {
         char line[2048];
@@ -2717,9 +2722,9 @@ eb_status_t get_current_hash_with_model(const char* root, const char* source, co
                         while (fgets(meta_line, sizeof(meta_line), meta_fp)) {
                             meta_line[strcspn(meta_line, "\n")] = 0;
                             
-                            if (strncmp(meta_line, "provider=", 9) == 0) {
+                            if (strncmp(meta_line, "model=", strlen("model=")) == 0) {
                                 char provider[32];
-                                if (sscanf(meta_line, "provider=%s", provider) == 1) {
+                                if (sscanf(meta_line, "model=%s", provider) == 1) {
                                     DEBUG_PRINT("get_current_hash_with_model: Provider from metadata: %s\n", provider);
                                     
                                     if (strcmp(provider, model) == 0) {
@@ -2743,16 +2748,16 @@ eb_status_t get_current_hash_with_model(const char* root, const char* source, co
             }
         }
         fclose(index_fp);
+        free(index_path);
     }
     
     // If not found in index, fall back to history file
     DEBUG_PRINT("get_current_hash_with_model: No matching entry found in index, checking history\n");
     
-    char log_path[PATH_MAX];
-    snprintf(log_path, sizeof(log_path), "%s/.embr/log", root);
-    DEBUG_PRINT("get_current_hash_with_model: Log path: %s\n", log_path);
-
-    FILE* fp = fopen(log_path, "r");
+    // Use per-set log file
+    char* log_path2 = get_current_set_log_path();
+    DEBUG_PRINT("get_current_hash_with_model: Log path: %s\n", log_path2);
+    FILE* fp = fopen(log_path2, "r");
     if (!fp) {
         DEBUG_PRINT("get_current_hash_with_model: Could not open history file\n");
         return EB_ERROR_NOT_FOUND;
@@ -2770,7 +2775,7 @@ eb_status_t get_current_hash_with_model(const char* root, const char* source, co
         
         // Parse line format "timestamp hash source provider"
         int parsed = sscanf(line, "%s %s %s %s", timestamp, hash, file, provider);
-        DEBUG_PRINT("get_current_hash_with_model: Parsed %d fields: timestamp=%s, hash=%s, file=%s, provider=%s\n", 
+        DEBUG_PRINT("get_current_hash_with_model: Parsed %d fields: timestamp=%s, hash=%s, file=%s, model=%s\n", 
                    parsed, timestamp, hash, file, parsed >= 4 ? provider : "N/A");
         
         if (parsed == 4) {
@@ -2788,6 +2793,7 @@ eb_status_t get_current_hash_with_model(const char* root, const char* source, co
     }
 
     fclose(fp);
+    free(log_path2);
     DEBUG_PRINT("get_current_hash_with_model: Search complete. Found: %s\n", found ? "yes" : "no");
     return found ? EB_SUCCESS : EB_ERROR_NOT_FOUND;
 }

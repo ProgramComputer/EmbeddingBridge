@@ -29,7 +29,7 @@ eb_status_t eb_decompress_zstd(const void *source, size_t source_size, void **de
 #define EB_VERSION_PATCH 0
 
 // Full version as string
-#define EB_VERSION_STR "0.1.0-alpha2"
+#define EB_VERSION_STR "0.1.0-alpha3"
 // END OF SET THE VERSION HERE
 
 

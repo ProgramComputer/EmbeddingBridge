@@ -131,10 +131,11 @@ int cmd_gc(int argc, char** argv) {
             printf("Bytes freed: %zu\n", result.bytes_freed);
         }
         
-        if (result.objects_removed > 0)
-            printf("Garbage collection complete.\n");
-        else
+        if (result.objects_removed == 0) {
             printf("No unreferenced objects to remove.\n");
+        } else {
+            printf("Removed %d unreferenced embedding objects\n", result.objects_removed);
+        }
     }
     
     return 0;

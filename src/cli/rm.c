@@ -15,6 +15,7 @@
 #include <inttypes.h>
 #include <errno.h>
 #include <limits.h>
+#include <sys/param.h>
 #include <time.h>
 #include <dirent.h>
 #include <unistd.h>
@@ -23,6 +24,8 @@
 #include "../core/error.h"
 #include "../core/path_utils.h"
 #include "colors.h"
+#include "remote.h"
+#include "set.h"
 
 #define MAX_LINE_LEN 2048
 #define MAX_PATH_LEN PATH_MAX
@@ -34,9 +37,9 @@ static const char* RM_USAGE =
     "\n"
     "Options:\n"
     "  --cached        Only remove from index, keep embedding files in storage\n"
-    "  --all           Remove all embeddings for the specified file (all chunks/models)\n"
+    "  --all           Remove all embeddings for the specified file (all models)\n"
     "  -m, --model <model> Only remove embedding for specific model\n"
-    "  -c, --chunk <id>    Only remove specific chunk embedding\n"
+    "  --remote <name>  Also remove from the specified remote (only .parquet files)\n"
     "  -v, --verbose    Show detailed output\n"
     "  -q, --quiet      Minimal output\n"
     "\n"
@@ -44,16 +47,16 @@ static const char* RM_USAGE =
     "  embr rm file.txt              # Remove all embeddings for file.txt\n"
     "  embr rm --cached file.txt     # Remove from index but keep embedding files\n"
     "  embr rm -m openai-3 file.txt  # Remove only embeddings for openai-3 model\n"
-    "  embr rm -c chunk1.npy file.txt # Remove only the specific chunk embedding\n";
+    "  embr rm --remote origin file.txt # Remove from local and remote 'origin'\n";
 
 // Forward declarations
 static bool is_file_tracked(const char* repo_root, const char* file_path);
 static int remove_from_index(const char* repo_root, const char* file_path, 
-                            const char* model, const char* chunk_id, bool all);
+                            const char* model, bool all);
 static int remove_embedding_files(const char* repo_root, const char* file_path,
-                                 const char* model, const char* chunk_id, bool all, bool verbose);
+                                 const char* model, bool all, bool verbose);
 static int update_history_for_removal(const char* repo_root, const char* file_path, 
-                                     const char* model, const char* chunk_id, bool all);
+                                     const char* model, bool all);
 
 // Helper function to convert file path to reference path
 static char* file_path_to_ref_path(const char* file_path) {
@@ -70,15 +73,12 @@ static char* file_path_to_ref_path(const char* file_path) {
 
 // Check if a file is tracked in the embedding index
 static bool is_file_tracked(const char* repo_root, const char* file_path) {
-    // First check if file exists in the index
-    char index_path[MAX_PATH_LEN];
-    snprintf(index_path, sizeof(index_path), "%s/.embr/index", repo_root);
-    
-    printf("DEBUG: Checking if file '%s' is tracked in index '%s'\n", file_path, index_path);
-    
-    FILE* index_file = fopen(index_path, "r");
+    char* index_path = get_current_set_index_path();
+    printf("DEBUG: Checking if file '%s' is tracked in index '%s'\n", file_path, index_path ? index_path : "(null)");
+    FILE* index_file = index_path ? fopen(index_path, "r") : NULL;
     if (!index_file) {
         printf("DEBUG: Failed to open index file\n");
+        if (index_path) free(index_path);
         return false;  // No index file
     }
     
@@ -106,20 +106,19 @@ static bool is_file_tracked(const char* repo_root, const char* file_path) {
     }
     
     fclose(index_file);
+    if (index_path) free(index_path);
     return found;
 }
 
 // Remove entries from the index file
 static int remove_from_index(const char* repo_root, const char* file_path, 
-                            const char* model, const char* chunk_id, bool all) {
-    // First read the index file to find matching hashes
-    char index_path[MAX_PATH_LEN];
-    snprintf(index_path, sizeof(index_path), "%s/.embr/index", repo_root);
-    
-    printf("DEBUG: Opening index file: %s\n", index_path);
-    FILE* index_file = fopen(index_path, "r");
+                            const char* model, bool all) {
+    char* index_path = get_current_set_index_path();
+    printf("DEBUG: Opening index file: %s\n", index_path ? index_path : "(null)");
+    FILE* index_file = index_path ? fopen(index_path, "r") : NULL;
     if (!index_file) {
-        cli_error("Failed to open index file: %s", index_path);
+        cli_error("Failed to open index file: %s", index_path ? index_path : "(null)");
+        if (index_path) free(index_path);
         return 1;
     }
     
@@ -150,6 +149,7 @@ static int remove_from_index(const char* repo_root, const char* file_path,
             if (!lines) {
                 cli_error("Memory allocation failed");
                 fclose(index_file);
+                if (index_path) free(index_path);
                 return 1;
             }
             lines[line_count++] = strdup(line);
@@ -173,8 +173,8 @@ static int remove_from_index(const char* repo_root, const char* file_path,
                     meta_line[meta_len-1] = '\0';
                 }
                 
-                if (strncmp(meta_line, "provider=", 9) == 0) {
-                    provider = strdup(meta_line + 9);
+                if (strncmp(meta_line, "model=", 6) == 0) {
+                    provider = strdup(meta_line + 6);
                     printf("DEBUG: Found provider in metadata: %s\n", provider);
                     break;
                 }
@@ -187,7 +187,7 @@ static int remove_from_index(const char* repo_root, const char* file_path,
         
         if (all) {
             should_remove = true;
-        } else if (model && !chunk_id) {
+        } else if (model) {
             // Normalize model comparison (strip off version numbers)
             char* model_base = NULL;
             char* provider_base = NULL;
@@ -215,15 +215,6 @@ static int remove_from_index(const char* repo_root, const char* file_path,
             
             free(model_base);
             free(provider_base);
-        } else if (!model && chunk_id) {
-            // Not implemented yet
-            should_remove = false;
-        } else if (model && chunk_id) {
-            // Not implemented yet
-            should_remove = false;
-        } else {
-            // Default: remove all entries for this file
-            should_remove = true;
         }
         
         if (should_remove) {
@@ -235,6 +226,7 @@ static int remove_from_index(const char* repo_root, const char* file_path,
             if (!hashes || !matched_models) {
                 cli_error("Memory allocation failed");
                 fclose(index_file);
+                if (index_path) free(index_path);
                 if (provider) free(provider);
                 return 1;
             }
@@ -248,6 +240,7 @@ static int remove_from_index(const char* repo_root, const char* file_path,
             if (!lines) {
                 cli_error("Memory allocation failed");
                 fclose(index_file);
+                if (index_path) free(index_path);
                 if (provider) free(provider);
                 return 1;
             }
@@ -257,6 +250,7 @@ static int remove_from_index(const char* repo_root, const char* file_path,
     }
     
     fclose(index_file);
+    if (index_path) free(index_path);
     
     // If no lines were removed, nothing to do
     if (removed == 0) {
@@ -267,7 +261,8 @@ static int remove_from_index(const char* repo_root, const char* file_path,
     // Write back the updated index file
     index_file = fopen(index_path, "w");
     if (!index_file) {
-        cli_error("Failed to open index file for writing: %s", index_path);
+        cli_error("Failed to open index file for writing: %s", index_path ? index_path : "(null)");
+        if (index_path) free(index_path);
         return 1;
     }
     
@@ -283,48 +278,53 @@ static int remove_from_index(const char* repo_root, const char* file_path,
             for (int i = 0; i < removed; i++) {
         // Remove from model refs
         if (matched_models[i]) {
-            char model_ref_path[MAX_PATH_LEN];
-            snprintf(model_ref_path, sizeof(model_ref_path), "%s/.embr/refs/models/%s", 
-                     repo_root, matched_models[i]);
-            
-            printf("DEBUG: Checking model ref: %s\n", model_ref_path);
-            
-            FILE* model_ref = fopen(model_ref_path, "r");
-            if (model_ref) {
-                char** ref_lines = NULL;
-                int ref_count = 0;
+            char* model_refs_dir = get_current_set_model_refs_dir();
+            if (!model_refs_dir) {
+                printf("DEBUG: Failed to get model refs dir for current set\n");
+            } else {
+                char model_ref_path[MAX_PATH_LEN];
+                snprintf(model_ref_path, sizeof(model_ref_path), "%s/%s", model_refs_dir, matched_models[i]);
+                free(model_refs_dir);
                 
-                char ref_line[MAX_LINE_LEN];
-                while (fgets(ref_line, sizeof(ref_line), model_ref)) {
-                    // Remove newline
-                    size_t ref_len = strlen(ref_line);
-                    if (ref_len > 0 && ref_line[ref_len-1] == '\n') {
-                        ref_line[ref_len-1] = '\0';
-                    }
+                printf("DEBUG: Checking model ref: %s\n", model_ref_path);
+                
+                FILE* model_ref = fopen(model_ref_path, "r");
+                if (model_ref) {
+                    char** ref_lines = NULL;
+                    int ref_count = 0;
                     
-                    char ref_hash[65], ref_path[MAX_PATH_LEN];
-                    if (sscanf(ref_line, "%s %s", ref_hash, ref_path) == 2) {
-                        if (strcmp(ref_hash, hashes[i]) != 0 && strcmp(ref_path, file_path) != 0) {
-                            // Keep line if hash and path don't match
-                            ref_lines = realloc(ref_lines, sizeof(char*) * (ref_count + 1));
-                            if (ref_lines) {
-                                ref_lines[ref_count++] = strdup(ref_line);
+                    char ref_line[MAX_LINE_LEN];
+                    while (fgets(ref_line, sizeof(ref_line), model_ref)) {
+                        // Remove newline
+                        size_t ref_len = strlen(ref_line);
+                        if (ref_len > 0 && ref_line[ref_len-1] == '\n') {
+                            ref_line[ref_len-1] = '\0';
+                        }
+                        
+                        char ref_hash[65], ref_path[MAX_PATH_LEN];
+                        if (sscanf(ref_line, "%s %s", ref_hash, ref_path) == 2) {
+                            if (strcmp(ref_hash, hashes[i]) != 0 && strcmp(ref_path, file_path) != 0) {
+                                // Keep line if hash and path don't match
+                                ref_lines = realloc(ref_lines, sizeof(char*) * (ref_count + 1));
+                                if (ref_lines) {
+                                    ref_lines[ref_count++] = strdup(ref_line);
+                                }
                             }
                         }
                     }
-                }
-                
-                fclose(model_ref);
-                
-                // Write updated model ref file
-                model_ref = fopen(model_ref_path, "w");
-                if (model_ref) {
-                    for (int j = 0; j < ref_count; j++) {
-                        fprintf(model_ref, "%s\n", ref_lines[j]);
-                        free(ref_lines[j]);
-                    }
-                    free(ref_lines);
+                    
                     fclose(model_ref);
+                    
+                    // Write updated model ref file
+                    model_ref = fopen(model_ref_path, "w");
+                    if (model_ref) {
+                        for (int j = 0; j < ref_count; j++) {
+                            fprintf(model_ref, "%s\n", ref_lines[j]);
+                            free(ref_lines[j]);
+                        }
+                        free(ref_lines);
+                        fclose(model_ref);
+                    }
                 }
             }
         }
@@ -357,14 +357,12 @@ static int remove_from_index(const char* repo_root, const char* file_path,
 
 // Remove embedding files from storage
 static int remove_embedding_files(const char* repo_root, const char* file_path,
-                                 const char* model, const char* chunk_id, bool all, bool verbose) {
-    // First read the index file to find matching hashes
-    char index_path[MAX_PATH_LEN];
-    snprintf(index_path, sizeof(index_path), "%s/.embr/index", repo_root);
-    
-    FILE* index_file = fopen(index_path, "r");
+                                 const char* model, bool all, bool verbose) {
+    char* index_path = get_current_set_index_path();
+    FILE* index_file = index_path ? fopen(index_path, "r") : NULL;
     if (!index_file) {
-        cli_error("Failed to open index file: %s", index_path);
+        cli_error("Failed to open index file: %s", index_path ? index_path : "(null)");
+        if (index_path) free(index_path);
         return 1;
     }
     
@@ -406,8 +404,8 @@ static int remove_embedding_files(const char* repo_root, const char* file_path,
                     meta_line[meta_len-1] = '\0';
                 }
                 
-                if (strncmp(meta_line, "provider=", 9) == 0) {
-                    strncpy(hash_model, meta_line + 9, sizeof(hash_model) - 1);
+                if (strncmp(meta_line, "model=", 6) == 0) {
+                    strncpy(hash_model, meta_line + 6, sizeof(hash_model) - 1);
                     break;
                 }
             }
@@ -419,17 +417,8 @@ static int remove_embedding_files(const char* repo_root, const char* file_path,
         
         if (all) {
             should_remove = true;
-        } else if (model && !chunk_id) {
+        } else if (model) {
             should_remove = (strcmp(hash_model, model) == 0);
-        } else if (!model && chunk_id) {
-            // This implementation doesn't support chunk-based removal yet
-            should_remove = false;
-        } else if (model && chunk_id) {
-            // This implementation doesn't support simultaneous model+chunk removal
-            should_remove = false;
-        } else {
-            // Default: remove all entries for this file
-            should_remove = true;
         }
         
         if (should_remove) {
@@ -461,6 +450,7 @@ static int remove_embedding_files(const char* repo_root, const char* file_path,
         }
         
     fclose(index_file);
+    if (index_path) free(index_path);
     
     if (verbose) {
         cli_info("Removed %d embedding objects with %d errors", removed_count, error_count);
@@ -471,7 +461,7 @@ static int remove_embedding_files(const char* repo_root, const char* file_path,
 
 // Update history file to record the removal
 static int update_history_for_removal(const char* repo_root, const char* file_path, 
-                                     const char* model, const char* chunk_id, bool all) {
+                                     const char* model, bool all) {
     // Git doesn't record removals in the log, so we'll follow that pattern
     // Just return success without writing to the history file
     return 0;
@@ -490,9 +480,7 @@ int cmd_rm(int argc, char *argv[])
     for (int i = 1; i < argc; i++) {
         if (argv[i][0] != '-' && (i == 1 || argv[i-1][0] != '-' || 
                                    strcmp(argv[i-1], "-m") != 0 &&
-                                   strcmp(argv[i-1], "--model") != 0 &&
-                                   strcmp(argv[i-1], "-c") != 0 &&
-                                   strcmp(argv[i-1], "--chunk") != 0)) {
+                                   strcmp(argv[i-1], "--model") != 0)) {
             file = argv[i];
             break;
         }
@@ -503,12 +491,13 @@ int cmd_rm(int argc, char *argv[])
         return 1;
     }
     
+    // Parse options
     bool cached = has_option(argc, argv, "--cached");
     bool all = has_option(argc, argv, "--all");
     bool verbose = has_option(argc, argv, "-v") || has_option(argc, argv, "--verbose");
     bool quiet = has_option(argc, argv, "-q") || has_option(argc, argv, "--quiet");
     const char *model = get_option_value(argc, argv, "-m", "--model");
-    const char *chunk_id = get_option_value(argc, argv, "-c", "--chunk");
+    const char *remote = get_option_value(argc, argv, NULL, "--remote");
     
     // Find repository root
     char *repo_root = find_repo_root(".");
@@ -534,7 +523,7 @@ int cmd_rm(int argc, char *argv[])
     }
     
     // Remove from index based on options
-    int ret = remove_from_index(repo_root, rel_file, model, chunk_id, all);
+    int ret = remove_from_index(repo_root, rel_file, model, all);
     if (ret != 0) {
         cli_error("Failed to remove from index");
         free(repo_root);
@@ -544,23 +533,98 @@ int cmd_rm(int argc, char *argv[])
     
     // If not --cached, also remove embedding files
     if (!cached) {
-        ret = remove_embedding_files(repo_root, rel_file, model, chunk_id, all, verbose);
+        ret = remove_embedding_files(repo_root, rel_file, model, all, verbose);
         if (ret != 0 && !quiet) {
             cli_warning("Failed to remove some embedding files");
         }
     }
     
+    // If --remote is specified, attempt remote deletion of .parquet files
+    int remote_error = 0;
+    if (remote) {
+        /* Determine current set name */
+        char set_name_buf[PATH_MAX];
+        if (get_current_set(set_name_buf, sizeof(set_name_buf)) != EB_SUCCESS) {
+            cli_error("Failed to determine current set name for remote deletion");
+            free(repo_root);
+            free(rel_file);
+            return 1;
+        }
+        char set_path[PATH_MAX + 6];  /* "sets/" + set name */
+        snprintf(set_path, sizeof(set_path), "sets/%s", set_name_buf);
+        // Build a list of .parquet files to delete
+        const char **parquet_files = NULL;
+        size_t parquet_count = 0;
+        DIR *d = opendir(".embr/objects");
+        if (d) {
+            struct dirent *entry;
+            while ((entry = readdir(d)) != NULL) {
+                size_t len = strlen(entry->d_name);
+                if (len > 5 && strcmp(entry->d_name + len - 5, ".meta") == 0) {
+                    char meta_path[MAX_PATH_LEN];
+                    snprintf(meta_path, sizeof(meta_path), ".embr/objects/%s", entry->d_name);
+                    FILE *meta = fopen(meta_path, "r");
+                    if (meta) {
+                        char meta_line[MAX_LINE_LEN];
+                        int found = 0;
+                        while (fgets(meta_line, sizeof(meta_line), meta)) {
+                            if (strncmp(meta_line, "source=", 7) == 0 &&
+                                strcmp(meta_line + 7, rel_file) == 0) {
+                                found = 1;
+                                break;
+                            }
+                        }
+                        fclose(meta);
+                        if (found) {
+                            char *hash = strndup(entry->d_name, len - 5);
+                            if (hash) {
+                                char *parquet_name = malloc(strlen(hash) + 9); // .parquet + null
+                                if (parquet_name) {
+                                    sprintf(parquet_name, "%s.parquet", hash);
+                                    parquet_files = realloc(parquet_files, sizeof(char*) * (parquet_count + 1));
+                                    if (parquet_files) {
+                                        parquet_files[parquet_count++] = parquet_name;
+                                    } else {
+                                        free(parquet_name);
+                                    }
+                                }
+                                free(hash);
+                            }
+                        }
+                    }
+                }
+            }
+            closedir(d);
+        }
+        if (parquet_count > 0 && parquet_files) {
+            eb_status_t status = eb_remote_delete_files(remote, set_path, parquet_files, parquet_count);
+            if (status != EB_SUCCESS) {
+                cli_error("Failed to delete one or more .parquet files from remote '%s' (status %d)", remote, status);
+                remote_error = 1;
+            } else if (verbose) {
+                cli_info("Deleted %zu .parquet files from remote '%s'", parquet_count, remote);
+            }
+            for (size_t i = 0; i < parquet_count; ++i) free((void*)parquet_files[i]);
+            free(parquet_files);
+        } else if (verbose) {
+            cli_info("No .parquet files found for remote deletion");
+        }
+    }
+    
     // Update history file
-    update_history_for_removal(repo_root, rel_file, model, chunk_id, all);
+    update_history_for_removal(repo_root, rel_file, model, all);
     
     if (!quiet) {
         printf("Removed '%s' from embedding tracking\n", rel_file);
         if (cached) {
             printf("Embeddings remain in storage (--cached option used)\n");
         }
+        if (remote && remote_error) {
+            printf("Warning: Some remote deletions failed. See above.\n");
+        }
     }
     
     free(repo_root);
     free(rel_file);
-    return 0;
+    return remote_error ? 2 : 0;
 } 

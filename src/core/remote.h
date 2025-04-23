@@ -96,13 +96,15 @@ eb_status_t eb_remote_list(char ***names, int *count);
  * @param data Data to push
  * @param size Size of data
  * @param path Path on the remote
+ * @param hash Hash of the data (embedding)
  * @return Status code
  */
 eb_status_t eb_remote_push(
     const char *remote_name,
     const void *data,
     size_t size,
-    const char *path);
+    const char *path,
+    const char *hash);
 
 /**
  * Pull data from a remote
@@ -267,13 +269,15 @@ eb_status_t load_operation_states(const char *filename);
  * @param data Data to push
  * @param size Size of data
  * @param path Path on the remote
+ * @param hash Hash of the data (embedding)
  * @return Status code
  */
 eb_status_t eb_remote_resume_push(
     const char *remote_name,
     const void *data,
     size_t size,
-    const char *path);
+    const char *path,
+    const char *hash);
 
 /**
  * List resumable operations
@@ -285,5 +289,27 @@ eb_status_t eb_remote_resume_push(
 eb_status_t eb_remote_list_operations(
     char ***operation_list,
     size_t *count);
+
+/**
+ * List all files (hashes) in a remote set path.
+ *
+ * @param remote_name Remote name
+ * @param set_path Path to the set on the remote (e.g., "sets/<set_name>")
+ * @param files_out Pointer to array of strings (caller must free each string and the array)
+ * @param count_out Pointer to number of files
+ * @return Status code
+ */
+eb_status_t eb_remote_list_files(const char *remote_name, const char *set_path, char ***files_out, size_t *count_out);
+
+/**
+ * Delete files from a remote set path.
+ *
+ * @param remote_name Remote name
+ * @param set_path Path to the set on the remote (e.g., "sets/<set_name>")
+ * @param files Array of file names to delete
+ * @param count Number of files to delete
+ * @return Status code
+ */
+eb_status_t eb_remote_delete_files(const char *remote_name, const char *set_path, const char **files, size_t count);
 
 #endif /* EB_REMOTE_H */ 

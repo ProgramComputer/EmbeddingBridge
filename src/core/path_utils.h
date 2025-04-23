@@ -19,6 +19,13 @@ char* get_absolute_path(const char* rel_path, const char* repo_root);
 // Get the path to the current repository
 char* get_repository_path(void);
 
+// Add helpers to get the log and index paths for the current set
+char* get_current_set_log_path(void);
+char* get_current_set_index_path(void);
+
+// Get the path to the current repository's model references directory
+char* get_current_set_model_refs_dir(void);
+
 /**
  * URL parsing structure
  */

@@ -24,6 +24,7 @@
 #include "../core/embedding.h"
 #include "../core/debug.h"
 #include "../core/hash_utils.h"
+#include "../core/path_utils.h"
 
 /* Function declarations */
 void cli_info(const char* format, ...);
@@ -54,7 +55,7 @@ static const char* ROLLBACK_USAGE =
     "  embr rollback --model voyage-2 4639f61 file.txt  # Rollback Voyage embedding to hash 4639f61\n";
 
 /* Find repository root directory */
-static eb_status_t find_repo_root(char* root_path, size_t size) 
+static eb_status_t find_repo_root_path(char* root_path, size_t size) 
 {
         char cwd[PATH_MAX];
         char check_path[PATH_MAX];
@@ -83,14 +84,16 @@ static eb_status_t find_repo_root(char* root_path, size_t size)
 /* Helper function to check if a hash exists in the history for a source file */
 static bool hash_in_history(const char* repo_root, const char* source_file, const char* hash_to_rollback, const char* model) 
 {
-        char log_path[PATH_MAX];
-        snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
-        
+        char* log_path = get_current_set_log_path();
+        if (!log_path) {
+                DEBUG_PRINT("Could not get per-set log path\n");
+                return false;
+        }
         DEBUG_PRINT("Checking log file: %s\n", log_path);
         DEBUG_PRINT("Looking for hash: %s, source: %s, model: %s\n", 
                    hash_to_rollback, source_file, model ? model : "(default)");
-        
         FILE* hist_file = fopen(log_path, "r");
+        free(log_path);
         if (!hist_file) {
                 DEBUG_PRINT("Could not open history file\n");
                 return false;
@@ -172,9 +175,11 @@ static bool hash_in_history(const char* repo_root, const char* source_file, cons
 
 /* Helper function to update the index file for a specific source file and hash */
 static eb_status_t update_index_entry(const char* repo_root, const char* source_file, const char* hash_to_rollback, const char* model) {
-        char index_path[PATH_MAX];
-        snprintf(index_path, sizeof(index_path), "%s/.embr/index", repo_root);
-
+        char* index_path = get_current_set_index_path();
+        if (!index_path) {
+                DEBUG_PRINT("Could not get per-set index path\n");
+                return EB_ERROR_FILE_IO;
+        }
         DEBUG_PRINT("update_index_entry: repo_root=%s, source_file=%s, hash_to_rollback=%s, index_path=%s, model=%s\n",
                    repo_root, source_file, hash_to_rollback, index_path, model ? model : "(null)");
 
@@ -189,6 +194,7 @@ static eb_status_t update_index_entry(const char* repo_root, const char* source_
         // Read current index content
         FILE* fp = fopen(index_path, "r");
         if (!fp) {
+                free(index_path);
                 return EB_ERROR_FILE_IO;
         }
 
@@ -221,9 +227,9 @@ static eb_status_t update_index_entry(const char* repo_root, const char* source_
                                         bool found_model = false;
                                         
                                         while (fgets(meta_line, sizeof(meta_line), meta_fp)) {
-                                                if (strncmp(meta_line, "provider=", 9) == 0) {
+                                                if (strncmp(meta_line, "model=", 6) == 0) {
                                                         char hash_model[32];
-                                                        sscanf(meta_line + 9, "%s", hash_model);
+                                                        sscanf(meta_line + 6, "%s", hash_model);
                                                         
                                                         // Keep if models are different
                                                         if (strcmp(hash_model, model) != 0) {
@@ -250,6 +256,7 @@ static eb_status_t update_index_entry(const char* repo_root, const char* source_
                                 lines = realloc(lines, (line_count + 1) * sizeof(char*));
                                 if (!lines) {
                                         fclose(fp);
+                                        free(index_path);
                                         return EB_ERROR_MEMORY_ALLOCATION;
                                 }
                                 lines[line_count] = strdup(line);
@@ -266,6 +273,7 @@ static eb_status_t update_index_entry(const char* repo_root, const char* source_
                         free(lines[i]);
                 }
                 free(lines);
+                free(index_path);
                 return EB_ERROR_FILE_IO;
         }
 
@@ -286,16 +294,17 @@ static eb_status_t update_index_entry(const char* repo_root, const char* source_
         fclose(fp);
         DEBUG_PRINT("update_index_entry: Index file updated successfully.\n");
 
+        free(index_path);
         return EB_SUCCESS;
 }
 
 /* Check if a file has embeddings from multiple models */
 static bool has_multiple_models_for_file(const char* repo_root, const char* file_path) 
 {
-        char log_path[PATH_MAX];
-        snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
-        
+        char* log_path = get_current_set_log_path();
+        if (!log_path) return false;
         FILE* fp = fopen(log_path, "r");
+        free(log_path);
         if (!fp) return false;
         
         char line[1024];
@@ -370,11 +379,10 @@ static char* get_available_models_for_file(const char* repo_root, const char* fi
 {
         static char model_list[512] = {0};
         model_list[0] = '\0';
-        
-        char log_path[PATH_MAX];
-        snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
-        
+        char* log_path = get_current_set_log_path();
+        if (!log_path) return model_list;
         FILE* fp = fopen(log_path, "r");
+        free(log_path);
         if (!fp) return model_list;
         
         char line[1024];
@@ -456,11 +464,10 @@ static const char* get_default_model_for_file(const char* repo_root, const char*
 {
         static char default_model[64] = {0};
         default_model[0] = '\0';
-        
-        char log_path[PATH_MAX];
-        snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
-        
+        char* log_path = get_current_set_log_path();
+        if (!log_path) return NULL;
         FILE* fp = fopen(log_path, "r");
+        free(log_path);
         if (!fp) return NULL;
         
         char line[1024];
@@ -657,20 +664,23 @@ static eb_status_t resolve_hash(
     char* full_hash_out,
     size_t hash_size
 ) {
-    char log_path[PATH_MAX];
-    snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
+    char* log_path = get_current_set_log_path();
+    if (!log_path) {
+        DEBUG_PRINT("resolve_hash: Could not get per-set log path\n");
+        return EB_ERROR_FILE_IO;
+    }
     DEBUG_PRINT("resolve_hash: Log path: %s\n", log_path);
-    
-    char index_path[PATH_MAX];
-    snprintf(index_path, sizeof(index_path), "%s/.embr/index", repo_root);
-    
+    char* index_path = get_current_set_index_path();
+    if (!index_path) {
+        free(log_path);
+        DEBUG_PRINT("resolve_hash: Could not get per-set index path\n");
+        return EB_ERROR_FILE_IO;
+    }
     char full_matched_hash[65] = {0};
     bool single_match_found = false;
     int match_count = 0;
-    
     DEBUG_PRINT("resolve_hash: Starting with repo_root=%s, partial_hash=%s, model=%s\n", 
                repo_root, partial_hash, model ? model : "(none)");
-    
     // Convert absolute source path to relative path
     const char* rel_source = source_file;
     size_t root_len = strlen(repo_root);
@@ -678,17 +688,15 @@ static eb_status_t resolve_hash(
         rel_source = source_file + root_len;
         if (*rel_source == '/') rel_source++; // Skip leading slash
     }
-    
     DEBUG_PRINT("resolve_hash: Using relative source path: %s\n", rel_source);
-    
     FILE* hist_file = fopen(log_path, "r");
+    free(log_path);
     if (!hist_file) {
-        DEBUG_PRINT("resolve_hash: Could not open log file %s\n", log_path);
+        free(index_path);
+        DEBUG_PRINT("resolve_hash: Could not open log file\n");
         return EB_ERROR_FILE_IO;
     }
-    
     DEBUG_PRINT("resolve_hash: Successfully opened history file\n");
-    
     char line[2048];
     while (fgets(line, sizeof(line), hist_file)) {
         char file_path_hist[PATH_MAX];
@@ -747,6 +755,7 @@ static eb_status_t resolve_hash(
     }
     
     fclose(hist_file);
+    free(index_path);
     
     DEBUG_PRINT("resolve_hash: Found %d matches\n", match_count);
     
@@ -818,7 +827,7 @@ int cmd_rollback(int argc, char** argv) {
                hash, source, model ? model : "(none)");
     
     // Find repository root
-    status = find_repo_root(repo_root, sizeof(repo_root));
+    status = find_repo_root_path(repo_root, sizeof(repo_root));
     if (status != EB_SUCCESS) {
         fprintf(stderr, "Error: Not in an embedding-bridge repository.\n");
         DEBUG_PRINT("cmd_rollback: Failed to find repo root, status=%d\n", status);
@@ -852,78 +861,85 @@ int cmd_rollback(int argc, char** argv) {
             
             /* Update the model ref file to ensure consistency */
             if (model) {
-                char model_ref_path[PATH_MAX];
-                snprintf(model_ref_path, sizeof(model_ref_path), "%s/.embr/refs/models/%s", repo_root, model);
-                
-                DEBUG_PRINT("cmd_rollback: Updating model ref file: %s\n", model_ref_path);
-                
-                // Get relative source path for model ref file
-                char rel_source_path[PATH_MAX] = {0};
-                size_t repo_root_len = strlen(repo_root);
-                if (strncmp(abs_source_path, repo_root, repo_root_len) == 0) {
-                    const char* rel_src = abs_source_path + repo_root_len;
-                    if (rel_src[0] == '/') {
-                        rel_src++; // Skip leading slash
-                    }
-                    strncpy(rel_source_path, rel_src, sizeof(rel_source_path) - 1);
+                char* model_refs_dir = get_current_set_model_refs_dir();
+                if (!model_refs_dir) {
+                    DEBUG_PRINT("cmd_rollback: Failed to get model refs dir for current set\n");
+                    fprintf(stderr, "Warning: Failed to update model reference file\n");
                 } else {
-                    strncpy(rel_source_path, abs_source_path, sizeof(rel_source_path) - 1);
-                }
-                
-                // Read existing model references first
-                FILE* model_read_fp = fopen(model_ref_path, "r");
-                char** existing_lines = NULL;
-                size_t line_count = 0;
-                
-                if (model_read_fp) {
-                    char line[PATH_MAX + 65]; // Hash (64) + space + path + null terminator
-                    while (fgets(line, sizeof(line), model_read_fp)) {
-                        // Skip lines with same source file - comparing to relative path
-                        char file_path[PATH_MAX];
-                        char file_hash[65];
-                        
-                        // Remove newline if present
-                        line[strcspn(line, "\n")] = 0;
-                        
-                        if (sscanf(line, "%s %s", file_hash, file_path) == 2) {
-                            // Need to check if relative path == rel_source_path
-                            if (strcmp(file_path, rel_source_path) != 0) {
-                                // Keep lines that don't match this source file
-                                existing_lines = realloc(existing_lines, (line_count + 1) * sizeof(char*));
-                                if (existing_lines)
-                                    existing_lines[line_count++] = strdup(line);
+                    char model_ref_path[PATH_MAX];
+                    snprintf(model_ref_path, sizeof(model_ref_path), "%s/%s", model_refs_dir, model);
+                    free(model_refs_dir);
+                    
+                    DEBUG_PRINT("cmd_rollback: Updating model ref file: %s\n", model_ref_path);
+                    
+                    // Get relative source path for model ref file
+                    char rel_source_path[PATH_MAX] = {0};
+                    size_t repo_root_len = strlen(repo_root);
+                    if (strncmp(abs_source_path, repo_root, repo_root_len) == 0) {
+                        const char* rel_src = abs_source_path + repo_root_len;
+                        if (rel_src[0] == '/') {
+                            rel_src++; // Skip leading slash
+                        }
+                        strncpy(rel_source_path, rel_src, sizeof(rel_source_path) - 1);
+                    } else {
+                        strncpy(rel_source_path, abs_source_path, sizeof(rel_source_path) - 1);
+                    }
+                    
+                    // Read existing model references first
+                    FILE* model_read_fp = fopen(model_ref_path, "r");
+                    char** existing_lines = NULL;
+                    size_t line_count = 0;
+                    
+                    if (model_read_fp) {
+                        char line[PATH_MAX + 65]; // Hash (64) + space + path + null terminator
+                        while (fgets(line, sizeof(line), model_read_fp)) {
+                            // Skip lines with same source file - comparing to relative path
+                            char file_path[PATH_MAX];
+                            char file_hash[65];
+                            
+                            // Remove newline if present
+                            line[strcspn(line, "\n")] = 0;
+                            
+                            if (sscanf(line, "%s %s", file_hash, file_path) == 2) {
+                                // Need to check if relative path == rel_source_path
+                                if (strcmp(file_path, rel_source_path) != 0) {
+                                    // Keep lines that don't match this source file
+                                    existing_lines = realloc(existing_lines, (line_count + 1) * sizeof(char*));
+                                    if (existing_lines)
+                                        existing_lines[line_count++] = strdup(line);
+                                }
                             }
                         }
+                        fclose(model_read_fp);
                     }
-                    fclose(model_read_fp);
-                }
-                
-                // Write updated model reference file
-                FILE* model_fp = fopen(model_ref_path, "w");
-                if (!model_fp) {
-                    DEBUG_PRINT("cmd_rollback: Warning: Failed to create model reference file for %s\n", model);
-                    fprintf(stderr, "Warning: Failed to update model reference file\n");
                     
-                    // Free allocated memory for existing lines
-                    for (size_t i = 0; i < line_count; i++) {
-                        free(existing_lines[i]);
+                    // Write updated model reference file
+                    FILE* model_fp = fopen(model_ref_path, "w");
+                    if (!model_fp) {
+                        DEBUG_PRINT("cmd_rollback: Warning: Failed to create model reference file for %s\n", model);
+                        fprintf(stderr, "Warning: Failed to update model reference file\n");
+                        
+                        // Free allocated memory for existing lines
+                        for (size_t i = 0; i < line_count; i++) {
+                            free(existing_lines[i]);
+                        }
+                        free(existing_lines);
+                        
+                        /* Continue anyway since index was updated */
+                    } else {
+                        // Write back existing lines first
+                        for (size_t i = 0; i < line_count; i++) {
+                            fprintf(model_fp, "%s\n", existing_lines[i]);
+                            free(existing_lines[i]);
+                        }
+                        free(existing_lines);
+                        
+                        // Add the new file entry with relative path
+                        fprintf(model_fp, "%s %s\n", full_hash, rel_source_path);
+                        
+                        fclose(model_fp);
+                        DEBUG_PRINT("cmd_rollback: Successfully updated model ref file for %s\n", model);
                     }
-                    free(existing_lines);
-                    
-                    /* Continue anyway since index was updated */
-                } else {
-                    // Write back existing lines first
-                    for (size_t i = 0; i < line_count; i++) {
-                        fprintf(model_fp, "%s\n", existing_lines[i]);
-                        free(existing_lines[i]);
-                    }
-                    free(existing_lines);
-                    
-                    // Add the new file entry with relative path
-                    fprintf(model_fp, "%s %s\n", full_hash, rel_source_path);
-                    
-                    fclose(model_fp);
-                    DEBUG_PRINT("cmd_rollback: Successfully updated model ref file for %s\n", model);
                 }
             }
             

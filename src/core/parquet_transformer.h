@@ -57,4 +57,7 @@ eb_status_t eb_register_parquet_transformer(void);
  */
 void eb_parquet_set_document_text(const char* text);
 
+/* Extract the metadata JSON string from the 'metadata' column of a Parquet file buffer. Returns a malloc'd string (caller must free), or NULL on error. */
+char *eb_parquet_extract_metadata_json(const void *parquet_data, size_t parquet_size);
+
 #endif /* EB_PARQUET_TRANSFORMER_H */ 

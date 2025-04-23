@@ -38,3 +38,6 @@
 [submodule "vendor/aws/aws-c-sdkutils"]
 	path = vendor/aws/aws-c-sdkutils
 	url = https://github.com/awslabs/aws-c-sdkutils.git
+[submodule "cwalk"]
+	path = cwalk
+	url = https://github.com/likle/cwalk

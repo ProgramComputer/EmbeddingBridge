@@ -21,6 +21,7 @@
 #include "../core/error.h"
 #include "../core/types.h"
 #include "../core/store.h"
+#include "../core/path_utils.h"
 
 /* Return codes */
 #define LOG_SUCCESS          0
@@ -75,7 +76,7 @@ static int compare_entries_by_time(const void* a, const void* b) {
     return 0;
 }
 
-static bool find_repo_root(char* path_out, size_t path_size) {
+static bool find_repo_root_path(char* path_out, size_t path_size) {
     char cwd[PATH_MAX];
     
     if (!getcwd(cwd, sizeof(cwd)))
@@ -222,13 +223,13 @@ static int show_log(const char* file_path, const char* model_filter, int limit, 
     char repo_root[PATH_MAX];
     const char* rel_path;
     size_t root_len;
-    char log_path[PATH_MAX];
-    FILE* f;
+    char* log_path = NULL;
+    FILE* f = NULL;
     char** current_models = NULL;
     char** current_hashes = NULL;
     int current_model_count = 0;
-    char index_path[PATH_MAX];
-    FILE* idx_file;
+    char* index_path = NULL;
+    FILE* idx_file = NULL;
     log_entry_t* entries = NULL;
     int entry_count = 0;
     char line[PATH_MAX + 256];
@@ -237,7 +238,7 @@ static int show_log(const char* file_path, const char* model_filter, int limit, 
     int i, j;
     
     /* Find repository root */
-    if (!find_repo_root(repo_root, sizeof(repo_root))) {
+    if (!find_repo_root_path(repo_root, sizeof(repo_root))) {
         cli_error("Not in an embedding repository");
         return LOG_ERROR_REPO;
     }
@@ -253,19 +254,19 @@ static int show_log(const char* file_path, const char* model_filter, int limit, 
     
     DEBUG_PRINT("show_log: repo_root=%s, rel_path=%s", repo_root, rel_path);
     
-    /* Open log file */
-    snprintf(log_path, sizeof(log_path), "%s/.embr/log", repo_root);
-    
-    f = fopen(log_path, "r");
+    /* Open per-set log file */
+    log_path = get_current_set_log_path();
+    f = log_path ? fopen(log_path, "r") : NULL;
     if (!f) {
         printf("No log found for %s\n", rel_path);
+        if (log_path) free(log_path);
         return LOG_SUCCESS;
     }
     
-    /* Read the index to determine current hashes */
-    snprintf(index_path, sizeof(index_path), "%s/.embr/index", repo_root);
+    /* Read the per-set index to determine current hashes */
+    index_path = get_current_set_index_path();
+    idx_file = index_path ? fopen(index_path, "r") : NULL;
     
-    idx_file = fopen(index_path, "r");
     if (idx_file) {
         char idx_line[PATH_MAX + 65];
         while (fgets(idx_line, sizeof(idx_line), idx_file)) {
@@ -281,41 +282,34 @@ static int show_log(const char* file_path, const char* model_filter, int limit, 
                 /* Get metadata to determine model */
                 char* metadata = get_metadata(repo_root, idx_hash);
                 if (metadata) {
-                    char* provider_line = strstr(metadata, "provider=");
+                    char* provider_line = strstr(metadata, "model=");
                     if (provider_line) {
                         char provider[32] = {0};
-                        if (sscanf(provider_line, "provider=%31s", provider) == 1) {
-                            /* Add this as a current hash */
-                            char** new_models = realloc(current_models, 
-                                              (current_model_count + 1) * sizeof(char*));
-                            char** new_hashes = realloc(current_hashes, 
-                                              (current_model_count + 1) * sizeof(char*));
-                            
+                        if (sscanf(provider_line, "model=%31s", provider) == 1) {
+                            char** new_models = realloc(current_models, (current_model_count + 1) * sizeof(char*));
+                            char** new_hashes = realloc(current_hashes, (current_model_count + 1) * sizeof(char*));
                             if (!new_models || !new_hashes) {
                                 free(metadata);
-                                free_current_model_data(current_models, current_hashes, 
-                                                       current_model_count);
+                                free_current_model_data(current_models, current_hashes, current_model_count);
                                 fclose(idx_file);
                                 fclose(f);
+                                if (log_path) free(log_path);
+                                if (index_path) free(index_path);
                                 return LOG_ERROR_MEMORY;
                             }
-                            
                             current_models = new_models;
                             current_hashes = new_hashes;
-                            
                             current_models[current_model_count] = strdup(provider);
                             current_hashes[current_model_count] = strdup(idx_hash);
-                            
-                            if (!current_models[current_model_count] || 
-                                !current_hashes[current_model_count]) {
+                            if (!current_models[current_model_count] || !current_hashes[current_model_count]) {
                                 free(metadata);
-                                free_current_model_data(current_models, current_hashes, 
-                                                       current_model_count);
+                                free_current_model_data(current_models, current_hashes, current_model_count);
                                 fclose(idx_file);
                                 fclose(f);
+                                if (log_path) free(log_path);
+                                if (index_path) free(index_path);
                                 return LOG_ERROR_MEMORY;
                             }
-                            
                             current_model_count++;
                         }
                     }
@@ -536,6 +530,9 @@ static int show_log(const char* file_path, const char* model_filter, int limit, 
     /* Cleanup */
     free_current_model_data(current_models, current_hashes, current_model_count);
     free(entries);
+    
+    if (log_path) free(log_path);
+    if (index_path) free(index_path);
     
     return status;
 }

@@ -242,33 +242,41 @@ eb_status_t set_create(const char* name, const char* description, const char* ba
 		return EB_ERROR_FILE_IO;
 	}
 
-	/* Create set config file */
-	char* config_path = malloc(strlen(set_path) + 12);
-	if (!config_path) {
+	/* Create per-set refs/models directory */
+	char* refs_dir = malloc(strlen(set_path) + 12); // "/refs/models" + null
+	if (!refs_dir) {
 		free(set_dir);
 		free(set_path);
 		return EB_ERROR_MEMORY_ALLOCATION;
 	}
-	
-	sprintf(config_path, "%s/config", set_path);
-	FILE* config = fopen(config_path, "w");
-	if (!config) {
+	sprintf(refs_dir, "%s/refs/models", set_path);
+	if (mkdir(refs_dir, 0755) != 0) {
+		// Not fatal, but warn (directory may be created later if needed)
+	}
+	free(refs_dir);
+
+	// Create empty log and index files for the set
+	char* log_path = malloc(strlen(set_path) + 6); // "/log" + null
+	if (!log_path) {
 		free(set_dir);
 		free(set_path);
-		free(config_path);
-		return EB_ERROR_FILE_IO;
+		return EB_ERROR_MEMORY_ALLOCATION;
 	}
+	sprintf(log_path, "%s/log", set_path);
+	FILE* log_file = fopen(log_path, "w");
+	if (log_file) fclose(log_file);
+	free(log_path);
 
-	/* Write basic config */
-	fprintf(config, "name=%s\n", name);
-	fprintf(config, "created=%ld\n", (long)time(NULL));
-	if (description)
-		fprintf(config, "description=%s\n", description);
-	if (base_set)
-		fprintf(config, "base=%s\n", base_set);
-
-	fclose(config);
-	free(config_path);
+	char* index_path = malloc(strlen(set_path) + 8); // "/index" + null
+	if (!index_path) {
+		free(set_dir);
+		free(set_path);
+		return EB_ERROR_MEMORY_ALLOCATION;
+	}
+	sprintf(index_path, "%s/index", set_path);
+	FILE* index_file = fopen(index_path, "w");
+	if (index_file) fclose(index_file);
+	free(index_path);
 
 	/* If this is the first set, make it the current set */
 	char* current_set = malloc(100);
@@ -314,10 +322,20 @@ eb_status_t set_list(bool verbose)
 	struct dirent* entry;
 	bool found = false;
 	while ((entry = readdir(dir)) != NULL) {
-		if (entry->d_type != DT_DIR || 
-		    strcmp(entry->d_name, ".") == 0 || 
-		    strcmp(entry->d_name, "..") == 0)
+		// Skip current and parent entries
+		if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
 			continue;
+		// Check if entry is a directory via stat
+		char* entry_path = malloc(strlen(set_dir) + strlen(entry->d_name) + 2);
+		if (!entry_path)
+			continue;
+		sprintf(entry_path, "%s/%s", set_dir, entry->d_name);
+		struct stat st;
+		if (stat(entry_path, &st) != 0 || !S_ISDIR(st.st_mode)) {
+			free(entry_path);
+			continue;
+		}
+		free(entry_path);
 
 		found = true;
 		
@@ -329,38 +347,6 @@ eb_status_t set_list(bool verbose)
 		else
 			printf("  %s", entry->d_name);
 
-		if (verbose) {
-			/* Read config for additional details */
-			char* config_path = malloc(strlen(set_dir) + strlen(entry->d_name) + 12);
-			if (!config_path)
-				continue;
-			
-			sprintf(config_path, "%s/%s/config", set_dir, entry->d_name);
-			FILE* config = fopen(config_path, "r");
-			free(config_path);
-			
-			if (config) {
-				char line[256];
-				printf(" - ");
-				bool printed_info = false;
-				
-				while (fgets(line, sizeof(line), config)) {
-					/* Remove newline */
-					line[strcspn(line, "\r\n")] = 0;
-					
-					if (strncmp(line, "created=", 8) == 0) {
-						time_t created = atol(line + 8);
-						char time_str[32];
-						strftime(time_str, sizeof(time_str), "%Y-%m-%d", localtime(&created));
-						printf(" - created %s", time_str);
-					}
-				}
-				
-				fclose(config);
-				printf("\n");
-			}
-		}
-		
 		printf("\n");
 	}
 
@@ -600,35 +586,42 @@ eb_status_t set_delete(const char* name, bool force)
 		return EB_ERROR_NOT_FOUND;
 	}
 
-	/* TODO: Check if set contains unique embeddings not in other sets */
-	if (!force) {
-		printf("Warning: Use --force to delete without checking for unique embeddings\n");
+	/* Remove log and index files if they exist */
+	char* log_path = malloc(strlen(set_path) + 6);
+	if (log_path) {
+		sprintf(log_path, "%s/log", set_path);
+		unlink(log_path);
+		free(log_path);
+	}
+	char* index_path = malloc(strlen(set_path) + 8);
+	if (index_path) {
+		sprintf(index_path, "%s/index", set_path);
+		unlink(index_path);
+		free(index_path);
 	}
 
-	/* Remove set directory and contents */
-	/* For now, just remove the config file and directory */
-	char* config_path = malloc(strlen(set_path) + 12);
-	if (!config_path) {
-		free(set_dir);
-		free(set_path);
-		return EB_ERROR_MEMORY_ALLOCATION;
+	/* Remove per-set refs/models directory if it exists */
+	char* refs_dir = malloc(strlen(set_path) + 12); // "/refs/models" + null
+	if (refs_dir) {
+		sprintf(refs_dir, "%s/refs/models", set_path);
+		DIR* d = opendir(refs_dir);
+		if (d) {
+			struct dirent* entry;
+			while ((entry = readdir(d)) != NULL) {
+				if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+					continue;
+				char* file_path = malloc(strlen(refs_dir) + strlen(entry->d_name) + 2);
+				if (file_path) {
+					sprintf(file_path, "%s/%s", refs_dir, entry->d_name);
+					unlink(file_path);
+					free(file_path);
+				}
+			}
+			closedir(d);
+		}
+		rmdir(refs_dir);
+		free(refs_dir);
 	}
-	
-	sprintf(config_path, "%s/config", set_path);
-	unlink(config_path);
-	free(config_path);
-
-	/* Remove references directory if it exists */
-	char* refs_path = malloc(strlen(set_path) + 12);
-	if (!refs_path) {
-		free(set_dir);
-		free(set_path);
-		return EB_ERROR_MEMORY_ALLOCATION;
-	}
-	
-	sprintf(refs_path, "%s/refs", set_path);
-	rmdir(refs_path);
-	free(refs_path);
 
 	/* Remove set directory */
 	if (rmdir(set_path) != 0) {

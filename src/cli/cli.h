@@ -49,7 +49,6 @@ typedef struct {
 int cmd_init(int argc, char** argv);
 int cmd_store(int argc, char** argv);
 int cmd_diff(int argc, char** argv);
-int cmd_hooks(int argc, char** argv);
 int cmd_config(int argc, char** argv);
 int cmd_remote(int argc, char** argv);
 int cmd_model(int argc, char** argv);
@@ -62,6 +61,8 @@ int cmd_merge(int argc, char **argv);
 int cmd_gc(int argc, char **argv);
 int cmd_get(int argc, char **argv);
 int cmd_rm(int argc, char **argv);
+int cmd_pull(int argc, char **argv);
+int cmd_push(int argc, char **argv);
 
 // Option parsing
 bool parse_cli_options(int argc, char** argv, eb_cli_options_t* opts);

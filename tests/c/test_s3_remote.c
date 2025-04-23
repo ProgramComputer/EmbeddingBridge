@@ -81,7 +81,7 @@ static void test_s3_transport_basic(void) {
             /* Simple data send/receive test */
             const char *test_message = "S3 transport test message";
             printf("Sending test data: %s\n", test_message);
-            status = transport_send_data(transport, test_message, strlen(test_message));
+            status = transport_send_data(transport, test_message, strlen(test_message), "testhash1234567890abcdef");
             
             if (status == EB_SUCCESS) {
                 printf("Data sent successfully\n");

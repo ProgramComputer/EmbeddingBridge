@@ -45,16 +45,17 @@ static int ssh_disconnect(eb_transport_t *transport)
 	return EB_SUCCESS;
 }
 
-static int ssh_send_data(eb_transport_t *transport, const void *data, size_t size)
+static int ssh_send_data(eb_transport_t *transport, const void *data, size_t size, const char *hash)
 {
 	(void)data;  /* Suppress unused parameter warning */
 	(void)size;  /* Suppress unused parameter warning */
+	(void)hash;  /* Suppress unused parameter warning */
 	
 	if (!transport)
 		return EB_ERROR_INVALID_PARAMETER;
 	
 	snprintf(transport->error_msg, sizeof(transport->error_msg),
-		 "SSH transport is not supported in this build");
+			 "SSH transport is not supported in this build");
 	transport->last_error = EB_ERROR_NOT_IMPLEMENTED;
 	
 	return EB_ERROR_NOT_IMPLEMENTED;
