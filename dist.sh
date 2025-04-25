@@ -21,6 +21,9 @@ if [ -d "vendor/aws/install/lib" ]; then
   find vendor/aws/install/lib -name "*.so*" -type f -exec cp -P {} dist/lib/ \; 2>/dev/null || echo "Warning: No AWS shared libraries found"
 fi
 
+# Copy our own shared library
+cp lib/libembedding_bridge.so dist/lib/ 2>/dev/null || echo "Warning: libembedding_bridge.so not found"
+
 # Create a wrapper script
 cat > dist/run_embedding_bridge.sh << 'EOF'
 #!/bin/bash

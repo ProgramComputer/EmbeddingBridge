@@ -75,8 +75,6 @@ _lib.embr_create_embedding_from_file.restype = ctypes.c_int
 _lib.embr_get_vector.argtypes = [ctypes.c_void_p, ctypes.c_uint64, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_void_p)]
 _lib.embr_get_vector.restype = ctypes.c_int
 
-_lib.embr_search_embeddings.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_int, ctypes.POINTER(ctypes.c_void_p)]
-_lib.embr_search_embeddings.restype = ctypes.c_int
 
 # Define cmd_ function signatures correctly
 _lib.cmd_rollback.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
@@ -108,6 +106,28 @@ _lib.cmd_rm.restype = ctypes.c_int
 
 _lib.cmd_switch.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
 _lib.cmd_switch.restype = ctypes.c_int
+
+# Add definitions for missing cmd_ functions
+_lib.cmd_config.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
+_lib.cmd_config.restype = ctypes.c_int
+
+_lib.cmd_gc.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
+_lib.cmd_gc.restype = ctypes.c_int
+
+_lib.cmd_get.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
+_lib.cmd_get.restype = ctypes.c_int
+
+_lib.cmd_merge.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
+_lib.cmd_merge.restype = ctypes.c_int
+
+_lib.cmd_pull.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
+_lib.cmd_pull.restype = ctypes.c_int
+
+_lib.cmd_push.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
+_lib.cmd_push.restype = ctypes.c_int
+
+_lib.cmd_remote.argtypes = [ctypes.c_int, ctypes.POINTER(ctypes.c_char_p)]
+_lib.cmd_remote.restype = ctypes.c_int
 
 class EmbeddingStore:
     """Python wrapper for EmbeddingBridge vector store"""
@@ -231,41 +251,6 @@ class EmbeddingStore:
             "metadata": {"source": "placeholder"}  # Placeholder
         }
     
-    def search(self, query_vector: List[float], top_k: int = 10) -> List[Dict]:
-        """Search for similar vectors
-        
-        Args:
-            query_vector: Query vector
-            top_k: Number of results to return
-            
-        Returns:
-            List of dictionaries with id, score, and metadata
-        """
-        # Convert vector to ctypes array
-        vector_array = np.array(query_vector, dtype=np.float32)
-        arr_type = ctypes.c_float * len(vector_array)
-        vector_arr = arr_type(*vector_array)
-        
-        # Create embedding from query vector
-        query_embedding_ptr = ctypes.c_void_p()
-        result = _lib.embr_create_embedding(vector_arr, len(vector_array), ctypes.byref(query_embedding_ptr))
-        if result != 0:
-            raise RuntimeError(f"Failed to create query embedding, error code: {result}")
-        
-        # Search for similar embeddings
-        results_ptr = ctypes.c_void_p()
-        result = _lib.embr_search_embeddings(self._store, query_embedding_ptr, top_k, ctypes.byref(results_ptr))
-        if result != 0:
-            raise RuntimeError(f"Search failed, error code: {result}")
-        
-        # TODO: Properly extract results from the results_ptr
-        # This would involve handling the actual C structs
-        
-        # For now, we'll just return placeholder results
-        return [
-            {"id": "result1", "score": 0.95, "metadata": {"source": "placeholder"}},
-            {"id": "result2", "score": 0.85, "metadata": {"source": "placeholder"}},
-        ]
     
     @property
     def dimension(self) -> int:
@@ -585,4 +570,71 @@ class EmbeddingBridge:
         argv_type = ctypes.c_char_p * argc
         argv = argv_type(*args)
         
-        return self._capture_stdout(_lib.cmd_set, argc, argv) 
+        return self._capture_stdout(_lib.cmd_set, argc, argv)
+
+    # New methods for additional CLI commands
+    def config(self, *cmd_args):
+        """Run a config command with provided arguments."""
+        args = [b"config"] + [a.encode('utf-8') if isinstance(a, str) else a for a in cmd_args]
+        argc = len(args)
+        argv_type = ctypes.c_char_p * argc
+        argv = argv_type(*args)
+        return self._capture_stdout(_lib.cmd_config, argc, argv)
+
+    def gc(self, *options):
+        """Run garbage collection. Pass options like '-n' for dry-run."""
+        args = [b"gc"] + [opt.encode('utf-8') if isinstance(opt, str) else opt for opt in options]
+        argc = len(args)
+        argv_type = ctypes.c_char_p * argc
+        argv = argv_type(*args)
+        return self._capture_stdout(_lib.cmd_gc, argc, argv)
+
+    def get(self, remote, path):
+        """Download a file or directory from a remote repository."""
+        args = [b"get", remote.encode('utf-8') if isinstance(remote, str) else remote,
+                path.encode('utf-8') if isinstance(path, str) else path]
+        argc = len(args)
+        argv_type = ctypes.c_char_p * argc
+        argv = argv_type(*args)
+        return self._capture_stdout(_lib.cmd_get, argc, argv)
+
+    def merge(self, source_set, target_set=None, strategy=None):
+        """Merge embeddings from one set to another."""
+        args = [b"merge", source_set.encode('utf-8') if isinstance(source_set, str) else source_set]
+        if target_set:
+            args.append(target_set.encode('utf-8') if isinstance(target_set, str) else target_set)
+        if strategy:
+            args.append(b"--strategy")
+            args.append(strategy.encode('utf-8') if isinstance(strategy, str) else strategy)
+        argc = len(args)
+        argv_type = ctypes.c_char_p * argc
+        argv = argv_type(*args)
+        return self._capture_stdout(_lib.cmd_merge, argc, argv)
+
+    def push(self, remote, set_name=None):
+        """Push a set to a remote."""
+        args = [b"push", remote.encode('utf-8') if isinstance(remote, str) else remote]
+        if set_name:
+            args.append(set_name.encode('utf-8') if isinstance(set_name, str) else set_name)
+        argc = len(args)
+        argv_type = ctypes.c_char_p * argc
+        argv = argv_type(*args)
+        return self._capture_stdout(_lib.cmd_push, argc, argv)
+
+    def pull(self, remote, set_name=None):
+        """Pull a set from a remote."""
+        args = [b"pull", remote.encode('utf-8') if isinstance(remote, str) else remote]
+        if set_name:
+            args.append(set_name.encode('utf-8') if isinstance(set_name, str) else set_name)
+        argc = len(args)
+        argv_type = ctypes.c_char_p * argc
+        argv = argv_type(*args)
+        return self._capture_stdout(_lib.cmd_pull, argc, argv)
+
+    def remote(self, *subargs):
+        """Manage remotes (add, list, remove, etc.)."""
+        args = [b"remote"] + [a.encode('utf-8') if isinstance(a, str) else a for a in subargs]
+        argc = len(args)
+        argv_type = ctypes.c_char_p * argc
+        argv = argv_type(*args)
+        return self._capture_stdout(_lib.cmd_remote, argc, argv) 
