@@ -586,14 +586,14 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
         DEBUG_ERROR("Failed to create list array builder: %s", 
                    list_builder_error ? list_builder_error->message : "Unknown error");
         if (list_builder_error) g_error_free(list_builder_error);
-        g_object_unref(float_field);
-        g_object_unref(float_type);
-        g_object_unref(list_type);
-        g_object_unref(values_field);
-        g_object_unref(id_field);
-        g_object_unref(metadata_field);
-        g_object_unref(blob_field);
-        g_object_unref(schema);
+        if (float_field && G_IS_OBJECT(float_field)) { g_object_unref(float_field); }
+        if (float_type && G_IS_OBJECT(float_type)) { g_object_unref(float_type); }
+        if (list_type && G_IS_OBJECT(list_type)) { g_object_unref(list_type); }
+        if (values_field && G_IS_OBJECT(values_field)) { g_object_unref(values_field); }
+        if (id_field && G_IS_OBJECT(id_field)) { g_object_unref(id_field); }
+        if (metadata_field && G_IS_OBJECT(metadata_field)) { g_object_unref(metadata_field); }
+        if (blob_field && G_IS_OBJECT(blob_field)) { g_object_unref(blob_field); }
+        if (schema && G_IS_OBJECT(schema)) { g_object_unref(schema); }
         if (metadata_json) free(metadata_json);
         if (need_to_free_decompressed) free(decompressed_data);
         return EB_ERROR_IO;
@@ -603,13 +603,13 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
     GArrowArrayBuilder* value_builder = garrow_list_array_builder_get_value_builder(list_builder);
     GArrowFloatArrayBuilder* float_builder = GARROW_FLOAT_ARRAY_BUILDER(value_builder);
     
-    g_object_unref(float_field);
-    g_object_unref(float_type);
-    g_object_unref(list_type);
-    g_object_unref(values_field);
-    g_object_unref(id_field);
-    g_object_unref(metadata_field);
-    g_object_unref(blob_field);
+    if (float_field && G_IS_OBJECT(float_field)) { g_object_unref(float_field); }
+    if (float_type && G_IS_OBJECT(float_type)) { g_object_unref(float_type); }
+    if (list_type && G_IS_OBJECT(list_type)) { g_object_unref(list_type); }
+    if (values_field && G_IS_OBJECT(values_field)) { g_object_unref(values_field); }
+    if (id_field && G_IS_OBJECT(id_field)) { g_object_unref(id_field); }
+    if (metadata_field && G_IS_OBJECT(metadata_field)) { g_object_unref(metadata_field); }
+    if (blob_field && G_IS_OBJECT(blob_field)) { g_object_unref(blob_field); }
     
     /* Create arrays for each column */
     /* ID array (single string - the hash) */
@@ -617,8 +617,8 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
     garrow_string_array_builder_append_string(id_builder, id_str, &error);
         if (error) {
         DEBUG_ERROR("Failed to append ID value: %s", error->message);
-        g_object_unref(id_builder);
-        g_object_unref(schema);
+        if (id_builder && G_IS_OBJECT(id_builder)) { g_object_unref(id_builder); }
+        if (schema && G_IS_OBJECT(schema)) { g_object_unref(schema); }
         g_error_free(error);
         if (metadata_json) free(metadata_json);
         if (need_to_free_decompressed) free(decompressed_data);
@@ -627,10 +627,10 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
         
     GArrowArray* id_array = GARROW_ARRAY(garrow_array_builder_finish(
         GARROW_ARRAY_BUILDER(id_builder), &error));
-    g_object_unref(id_builder);
+    if (id_builder && G_IS_OBJECT(id_builder)) { g_object_unref(id_builder); }
     if (error) {
         DEBUG_ERROR("Failed to finish ID array: %s", error->message);
-        g_object_unref(schema);
+        if (schema && G_IS_OBJECT(schema)) { g_object_unref(schema); }
         g_error_free(error);
         if (metadata_json) free(metadata_json);
         if (need_to_free_decompressed) free(decompressed_data);
@@ -641,10 +641,10 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
     garrow_list_array_builder_append_value(list_builder, &error);
         if (error) {
         DEBUG_ERROR("Failed to append list start: %s", error->message);
-        g_object_unref(id_array);
-        g_object_unref(float_builder);
-        g_object_unref(list_builder);
-        g_object_unref(schema);
+        if (id_array && G_IS_OBJECT(id_array)) { g_object_unref(id_array); }
+        if (float_builder && G_IS_OBJECT(float_builder)) { g_object_unref(float_builder); } /* Assuming float_builder is GObject, needs check */
+        if (list_builder && G_IS_OBJECT(list_builder)) { g_object_unref(list_builder); }
+        if (schema && G_IS_OBJECT(schema)) { g_object_unref(schema); }
         g_error_free(error);
         if (metadata_json) free(metadata_json);
         if (need_to_free_decompressed) free(decompressed_data);
@@ -656,10 +656,10 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
         garrow_float_array_builder_append_value(float_builder, values[i], &error);
         if (error) {
             DEBUG_ERROR("Failed to append float value at index %u: %s", i, error->message);
-            g_object_unref(id_array);
-            g_object_unref(float_builder);
-            g_object_unref(list_builder);
-            g_object_unref(schema);
+            if (id_array && G_IS_OBJECT(id_array)) { g_object_unref(id_array); }
+            if (float_builder && G_IS_OBJECT(float_builder)) { g_object_unref(float_builder); } /* Assuming float_builder is GObject, needs check */
+            if (list_builder && G_IS_OBJECT(list_builder)) { g_object_unref(list_builder); }
+            if (schema && G_IS_OBJECT(schema)) { g_object_unref(schema); }
             g_error_free(error);
             if (metadata_json) free(metadata_json);
             if (need_to_free_decompressed) free(decompressed_data);
@@ -669,13 +669,13 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
     
     GArrowArray* values_array = GARROW_ARRAY(garrow_array_builder_finish(
         GARROW_ARRAY_BUILDER(list_builder), &error));
-    g_object_unref(list_builder);
-    g_object_unref(float_builder);
+    if (list_builder && G_IS_OBJECT(list_builder)) { g_object_unref(list_builder); }
+    if (float_builder && G_IS_OBJECT(float_builder)) { g_object_unref(float_builder); } /* Assuming float_builder is GObject, needs check */
     
     if (error) {
         DEBUG_ERROR("Failed to finish values array: %s", error->message);
-        g_object_unref(id_array);
-        g_object_unref(schema);
+        if (id_array && G_IS_OBJECT(id_array)) { g_object_unref(id_array); }
+        if (schema && G_IS_OBJECT(schema)) { g_object_unref(schema); }
         g_error_free(error);
         if (metadata_json) free(metadata_json);
         if (need_to_free_decompressed) free(decompressed_data);
@@ -687,10 +687,10 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
     garrow_string_array_builder_append_string(metadata_builder, metadata_json, &error);
     if (error) {
         DEBUG_ERROR("Failed to append metadata value: %s", error->message);
-        g_object_unref(id_array);
-        g_object_unref(values_array);
-        g_object_unref(metadata_builder);
-        g_object_unref(schema);
+        if (id_array && G_IS_OBJECT(id_array)) { g_object_unref(id_array); }
+        if (values_array && G_IS_OBJECT(values_array)) { g_object_unref(values_array); }
+        if (metadata_builder && G_IS_OBJECT(metadata_builder)) { g_object_unref(metadata_builder); }
+        if (schema && G_IS_OBJECT(schema)) { g_object_unref(schema); }
         g_error_free(error);
         if (metadata_json) free(metadata_json);
         if (need_to_free_decompressed) free(decompressed_data);
@@ -699,12 +699,12 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
     
     GArrowArray* metadata_array = GARROW_ARRAY(garrow_array_builder_finish(
         GARROW_ARRAY_BUILDER(metadata_builder), &error));
-    g_object_unref(metadata_builder);
+    if (metadata_builder && G_IS_OBJECT(metadata_builder)) { g_object_unref(metadata_builder); }
     if (error) {
         DEBUG_ERROR("Failed to finish metadata array: %s", error->message);
-        g_object_unref(id_array);
-        g_object_unref(values_array);
-        g_object_unref(schema);
+        if (id_array && G_IS_OBJECT(id_array)) { g_object_unref(id_array); }
+        if (values_array && G_IS_OBJECT(values_array)) { g_object_unref(values_array); }
+        if (schema && G_IS_OBJECT(schema)) { g_object_unref(schema); }
         g_error_free(error);
         if (metadata_json) free(metadata_json);
         if (need_to_free_decompressed) free(decompressed_data);
@@ -742,12 +742,12 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
     garrow_string_array_builder_append_string(blob_builder, blob_json, &error);
     if (error) {
         DEBUG_ERROR("Failed to append blob value: %s", error->message);
-        g_object_unref(blob_builder);
+        if (blob_builder && G_IS_OBJECT(blob_builder)) { g_object_unref(blob_builder); }
         free(blob_json);
-        g_object_unref(id_array);
-        g_object_unref(values_array);
-        g_object_unref(metadata_array);
-        g_object_unref(schema);
+        if (id_array && G_IS_OBJECT(id_array)) { g_object_unref(id_array); }
+        if (values_array && G_IS_OBJECT(values_array)) { g_object_unref(values_array); }
+        if (metadata_array && G_IS_OBJECT(metadata_array)) { g_object_unref(metadata_array); }
+        if (schema && G_IS_OBJECT(schema)) { g_object_unref(schema); }
         g_error_free(error);
         if (need_to_free_decompressed) free(decompressed_data);
         return EB_ERROR_IO;
@@ -755,15 +755,15 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
 
     GArrowArray* blob_array = GARROW_ARRAY(garrow_array_builder_finish(
         GARROW_ARRAY_BUILDER(blob_builder), &error));
-    g_object_unref(blob_builder);
+    if (blob_builder && G_IS_OBJECT(blob_builder)) { g_object_unref(blob_builder); }
     free(blob_json);
 
     if (error) {
         DEBUG_ERROR("Failed to finish blob array: %s", error->message);
-        g_object_unref(id_array);
-        g_object_unref(values_array);
-        g_object_unref(metadata_array);
-        g_object_unref(schema);
+        if (id_array && G_IS_OBJECT(id_array)) { g_object_unref(id_array); }
+        if (values_array && G_IS_OBJECT(values_array)) { g_object_unref(values_array); }
+        if (metadata_array && G_IS_OBJECT(metadata_array)) { g_object_unref(metadata_array); }
+        if (schema && G_IS_OBJECT(schema)) { g_object_unref(schema); }
         g_error_free(error);
         if (need_to_free_decompressed) free(decompressed_data);
         return EB_ERROR_IO;
@@ -780,7 +780,7 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
     if (error) {
         DEBUG_ERROR("Failed to create record batch: %s", error->message);
         g_list_free_full(arrays, g_object_unref);
-        g_object_unref(schema);
+        if (schema && G_IS_OBJECT(schema)) { g_object_unref(schema); }
         g_error_free(error);
         if (need_to_free_decompressed) free(decompressed_data);
         return EB_ERROR_IO;
@@ -790,12 +790,12 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
     /* Create table from record batch */
     GList* batches = g_list_append(NULL, record_batch);
     GArrowTable* table = garrow_table_new_record_batches(schema, &record_batch, 1, &error);
-    g_object_unref(record_batch);
+    if (record_batch && G_IS_OBJECT(record_batch)) { g_object_unref(record_batch); }
     g_list_free(batches);
     
     if (error) {
         DEBUG_ERROR("Failed to create table: %s", error->message);
-        g_object_unref(schema);
+        if (schema && G_IS_OBJECT(schema)) { g_object_unref(schema); }
         g_error_free(error);
         if (need_to_free_decompressed) free(decompressed_data);
         return EB_ERROR_IO;
@@ -826,9 +826,9 @@ static eb_status_t parquet_transform(struct eb_transformer* transformer,
                                              writer_props,
                                              &error);
     
-    g_object_unref(writer_props);
-    g_object_unref(output_stream);
-    g_object_unref(schema);
+    if (writer_props && G_IS_OBJECT(writer_props)) { g_object_unref(writer_props); }
+    if (output_stream && G_IS_OBJECT(output_stream)) { g_object_unref(output_stream); }
+    if (schema && G_IS_OBJECT(schema)) { g_object_unref(schema); }
     
     if (!writer) {
         DEBUG_ERROR("Failed to create Parquet writer: %s", error ? error->message : "Unknown error");
