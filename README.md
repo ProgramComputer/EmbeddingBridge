@@ -2,6 +2,9 @@
 
 A command-line tool for managing and versioning embedding vectors. Think of it as "Git for Embeddings" - helping you track, compare, and manage semantic changes in your ML models.
 
+## Demo
+
+<img src="demo.gif" alt="demo" />
 ## Features
 
 - Store and version control your embedding vectors
@@ -63,6 +66,7 @@ embr rollback <hash> document.txt
 embr set create experimental
 embr switch experimental
 ```
+
 
 ## Core Commands
 
