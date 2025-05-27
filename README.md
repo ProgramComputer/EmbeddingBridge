@@ -5,6 +5,7 @@ A command-line tool for managing and versioning embedding vectors. Think of it a
 ## Demo
 
 <img src="demo.gif" alt="demo" />
+
 ## Features
 
 - Store and version control your embedding vectors
