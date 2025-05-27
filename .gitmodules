@@ -1,7 +1,7 @@
-[submodule "npy_array"]
-	path = npy_array
+[submodule "vendor/npy_array"]
+	path = vendor/npy_array
 	url = https://github.com/oysteijo/npy_array
-[submodule "arrow"]
+[submodule "vendor/arrow"]
 	path = vendor/arrow
 	url = https://github.com/apache/arrow.git
 [submodule "vendor/aws/aws-c-common"]
