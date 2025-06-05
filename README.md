@@ -161,6 +161,27 @@ embr rm --cached file.txt
 embr rm -m openai-3 file.txt
 ```
 
+## Python Bindings
+
+Leverage EmbeddingBridge within your Python projects using our dedicated package. It's ideal for scripting, automation, and deeper integration with your existing ML workflows.
+
+**Python Package Highlights:**
+
+-   Direct access to core storage and management functionalities via Python `ctypes` bindings to the C library.
+-   `EmbeddingStore` class: For fine-grained control over embedding storage, retrieval, and similarity searches.
+-   `EmbeddingBridge` class: Programmatically execute `embr` CLI commands from your Python scripts.
+-   Seamlessly integrate EmbeddingBridge's versioning and management capabilities into your Python applications.
+
+### Installation
+
+Install the Python package in editable mode directly from the project root:
+```bash
+pip install -e ./python
+```
+This command assumes your `setup.py` for the Python package is located in the `python` subdirectory.
+
+For comprehensive API documentation, usage examples, and advanced configurations, please consult the [Python Package README](python/README.md).
+
 ## Contributing
 
 We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.md) for details.
