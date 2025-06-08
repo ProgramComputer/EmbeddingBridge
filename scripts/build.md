@@ -1,14 +1,72 @@
-# AWS C Libraries Build Guide
+# Build Guide
 
-This guide provides instructions for building the AWS C libraries required for S3 integration.
+This guide provides instructions for building all required dependencies for the EmbeddingBridge project.
 
 ## Prerequisites
 
 - CMake 3.9+
 - C/C++ compiler (GCC 4.9+ or Clang 3.3+)
 - Git
+- Python 3.6+ (for Arrow Python bindings)
+- pkg-config
 
-## Build Order
+## Quick Start
+
+Run the build scripts from the project root directory:
+
+```bash
+# Build all dependencies
+./scripts/build_aws.sh
+./scripts/build_arrow.sh
+
+# Build npy_array
+cd vendor/npy_array
+./configure
+make
+sudo make install
+cd ../..
+```
+
+## Apache Arrow
+
+Apache Arrow provides columnar data structures and is required for Parquet file support.
+
+### Build Arrow
+
+```bash
+./scripts/build_arrow.sh
+```
+
+This script will:
+- Download and build Apache Arrow C++ libraries
+- Install to `/usr/local` by default
+- Build with Parquet, CSV, and dataset support
+- Optionally build GLib bindings with `--with-glib` flag
+
+## NPY Array Library
+
+The npy_array library provides C support for reading/writing NumPy arrays.
+
+### Build npy_array
+
+```bash
+cd vendor/npy_array
+./configure --prefix=/usr/local
+make
+sudo make install
+```
+
+For more configuration options:
+```bash
+cd vendor/npy_array
+./configure --help
+```
+
+## AWS C Libraries
+
+AWS C libraries are required for S3 integration.
+
+### Build Order
 
 The libraries must be built in the following order due to dependencies:
 
@@ -24,15 +82,21 @@ The libraries must be built in the following order due to dependencies:
 10. **aws-c-auth** - Authentication and credentials management
 11. **aws-c-s3** - S3 service client
 
-## Build Steps
+### Quick Build
 
-### 1. Set up the directory structure
+```bash
+./scripts/build_aws.sh
+```
+
+### Manual Build Steps
+
+#### 1. Set up the directory structure
 
 ```bash
 mkdir -p vendor/aws/install
 ```
 
-### 2. AWS-LC (LibCrypto)
+#### 2. AWS-LC (LibCrypto)
 
 ```bash
 cd vendor/aws
@@ -42,7 +106,7 @@ cmake -S vendor/aws/aws-lc -B vendor/aws/aws-lc/build -DCMAKE_INSTALL_PREFIX=$(p
 cmake --build vendor/aws/aws-lc/build --target install
 ```
 
-### 3. s2n-tls
+#### 3. s2n-tls
 
 ```bash
 cd vendor/aws
@@ -52,7 +116,7 @@ cmake -S vendor/aws/s2n-tls -B vendor/aws/s2n-tls/build -DCMAKE_INSTALL_PREFIX=$
 cmake --build vendor/aws/s2n-tls/build --target install
 ```
 
-### 4. aws-c-common
+#### 4. aws-c-common
 
 ```bash
 cd vendor/aws
@@ -62,7 +126,7 @@ cmake -S vendor/aws/aws-c-common -B vendor/aws/aws-c-common/build -DCMAKE_INSTAL
 cmake --build vendor/aws/aws-c-common/build --target install
 ```
 
-### 5. aws-checksums
+#### 5. aws-checksums
 
 ```bash
 cd vendor/aws
@@ -72,7 +136,7 @@ cmake -S vendor/aws/aws-checksums -B vendor/aws/aws-checksums/build -DCMAKE_INST
 cmake --build vendor/aws/aws-checksums/build --target install
 ```
 
-### 6. aws-c-cal
+#### 6. aws-c-cal
 
 ```bash
 cd vendor/aws
@@ -82,7 +146,7 @@ cmake -S vendor/aws/aws-c-cal -B vendor/aws/aws-c-cal/build -DCMAKE_INSTALL_PREF
 cmake --build vendor/aws/aws-c-cal/build --target install
 ```
 
-### 7. aws-c-io
+#### 7. aws-c-io
 
 ```bash
 cd vendor/aws
@@ -92,7 +156,7 @@ cmake -S vendor/aws/aws-c-io -B vendor/aws/aws-c-io/build -DCMAKE_INSTALL_PREFIX
 cmake --build vendor/aws/aws-c-io/build --target install
 ```
 
-### 8. aws-c-compression
+#### 8. aws-c-compression
 
 ```bash
 cd vendor/aws
@@ -102,7 +166,7 @@ cmake -S vendor/aws/aws-c-compression -B vendor/aws/aws-c-compression/build -DCM
 cmake --build vendor/aws/aws-c-compression/build --target install
 ```
 
-### 9. aws-c-http
+#### 9. aws-c-http
 
 ```bash
 cd vendor/aws
@@ -112,7 +176,7 @@ cmake -S vendor/aws/aws-c-http -B vendor/aws/aws-c-http/build -DCMAKE_INSTALL_PR
 cmake --build vendor/aws/aws-c-http/build --target install
 ```
 
-### 10. aws-c-sdkutils
+#### 10. aws-c-sdkutils
 
 ```bash
 cd vendor/aws
@@ -122,7 +186,7 @@ cmake -S vendor/aws/aws-c-sdkutils -B vendor/aws/aws-c-sdkutils/build -DCMAKE_IN
 cmake --build vendor/aws/aws-c-sdkutils/build --target install
 ```
 
-### 11. aws-c-auth
+#### 11. aws-c-auth
 
 ```bash
 cd vendor/aws
@@ -132,7 +196,7 @@ cmake -S vendor/aws/aws-c-auth -B vendor/aws/aws-c-auth/build -DCMAKE_INSTALL_PR
 cmake --build vendor/aws/aws-c-auth/build --target install
 ```
 
-### 12. aws-c-s3
+#### 12. aws-c-s3
 
 ```bash
 cd vendor/aws
@@ -145,26 +209,13 @@ cmake --build vendor/aws/aws-c-s3/build --target install
 ## Using the Libraries
 
 After building, the libraries and headers will be installed in:
-- Libraries: `vendor/aws/install/lib/`
-- Headers: `vendor/aws/install/include/`
-- Executables: `vendor/aws/install/bin/`
+- AWS Libraries: `vendor/aws/install/lib/`
+- AWS Headers: `vendor/aws/install/include/`
+- Arrow Libraries: `/usr/local/lib/` (or custom prefix)
+- npy_array: `/usr/local/lib/` (or custom prefix)
 
 To test if everything is working correctly, run:
 
 ```bash
 vendor/aws/install/bin/s3 --help
 ```
-
-## Linking in CMake Projects
-
-To use these libraries in a CMake project, add the following to your CMakeLists.txt:
-
-```cmake
-set(AWS_LIBRARIES_DIR "${CMAKE_SOURCE_DIR}/vendor/aws/install")
-set(CMAKE_PREFIX_PATH "${AWS_LIBRARIES_DIR};${CMAKE_PREFIX_PATH}")
-
-find_package(aws-c-s3 REQUIRED)
-
-# Link your target with AWS libraries
-target_link_libraries(your_target PRIVATE AWS::aws-c-s3)
-``` 
